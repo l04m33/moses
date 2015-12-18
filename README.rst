@@ -52,4 +52,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
     ./moses.py -c -b 127.0.0.1:1080 -p some.server.addr.ess:32000 \
                -l client_key.pem -r server_cert.pem
 
+License
+#######
 
+MIT.
