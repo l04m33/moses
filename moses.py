@@ -46,6 +46,9 @@ import argparse
 import sys
 
 
+DEFAULT_BLOCK_SIZE = 2048
+
+
 logger = logging.getLogger(__file__)
 
 
@@ -101,11 +104,11 @@ def sync_write(writer, data):
 
 
 @asyncio.coroutine
-def streaming(reader, writer):
-    data = yield from reader.read(2048)
+def streaming(reader, writer, block_size):
+    data = yield from reader.read(block_size)
     while len(data) > 0:
         yield from sync_write(writer, data)
-        data = yield from reader.read(2048)
+        data = yield from reader.read(block_size)
     if writer.can_write_eof():
         writer.write_eof()
         return True
@@ -114,7 +117,7 @@ def streaming(reader, writer):
 
 
 @asyncio.coroutine
-def server_connection_cb(reader, writer):
+def server_connection_cb(reader, writer, bs=DEFAULT_BLOCK_SIZE):
     try:
         method_list = yield from socks_recv_auth_method_list(reader)
     except:
@@ -159,8 +162,8 @@ def server_connection_cb(reader, writer):
     yield from sync_write(
         writer, b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
 
-    stream_up = asyncio.async(streaming(reader, proxy_writer))
-    stream_down = asyncio.async(streaming(proxy_reader, writer))
+    stream_up = asyncio.async(streaming(reader, proxy_writer, bs))
+    stream_down = asyncio.async(streaming(proxy_reader, writer, bs))
 
     try:
         st_down_stat = yield from asyncio.wait_for(stream_down, None)
@@ -181,7 +184,7 @@ def server_connection_cb(reader, writer):
 
 
 @asyncio.coroutine
-def client_connection_cb(reader, writer, server_addr, ssl_ctx=None):
+def client_connection_cb(reader, writer, server_addr, bs=DEFAULT_BLOCK_SIZE, ssl_ctx=None):
     connect_op = asyncio.async(
         asyncio.open_connection(server_addr[0], server_addr[1], ssl=ssl_ctx))
     try:
@@ -193,8 +196,8 @@ def client_connection_cb(reader, writer, server_addr, ssl_ctx=None):
         writer.close()
         return
 
-    stream_up = asyncio.async(streaming(reader, proxy_writer))
-    stream_down = asyncio.async(streaming(proxy_reader, writer))
+    stream_up = asyncio.async(streaming(reader, proxy_writer, bs))
+    stream_down = asyncio.async(streaming(proxy_reader, writer, bs))
 
     try:
         st_up_stat = yield from asyncio.wait_for(stream_up, None)
@@ -228,11 +231,12 @@ def build_ssl_ctx(my_certs_file, peer_certs_file):
 def server_main(loop, args):
     logger.info('Moses server listening at %s', args.bind)
 
+    cb = functools.partial(server_connection_cb, bs=args.block_size)
+
     ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
 
     local_ip, local_port = parse_ip_port(args.bind)
-    starter = asyncio.start_server(server_connection_cb,
-            local_ip, local_port,
+    starter = asyncio.start_server(cb, local_ip, local_port,
             ssl=ssl_ctx,
             backlog=args.backlog,
             reuse_address=True,
@@ -257,6 +261,7 @@ def client_main(loop, args):
     ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
     cb = functools.partial(client_connection_cb,
             server_addr=server_addr,
+            bs=args.block_size,
             ssl_ctx=ssl_ctx)
 
     local_ip, local_port = parse_ip_port(args.bind)
@@ -305,6 +310,10 @@ def parse_arguments():
                 'critical', 'fatal', 'error',
                 'warning', 'info', 'debug',
                 ])
+    common_group.add_argument('--block-size',
+            help='Block size for data streaming, in bytes (default: 2048)',
+            default=DEFAULT_BLOCK_SIZE,
+            type=int)
 
     client_group = parser.add_argument_group('Client Options')
 
