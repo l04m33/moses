@@ -16,7 +16,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
     usage: moses.py [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-l LOCAL_CERT]
                     [-r REMOTE_CERT] [--backlog BACKLOG]
                     [--loglevel {critical,fatal,error,warning,info,debug}]
-                    [-p <ADDRESS>:<PORT>]
+                    [--block-size BLOCK_SIZE] [-p <ADDRESS>:<PORT>]
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -33,6 +33,9 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
       --backlog BACKLOG     Backlog for the listening socket (default: 128)
       --loglevel {critical,fatal,error,warning,info,debug}
                             Log level (default: info)
+      --block-size BLOCK_SIZE
+                            Block size for data streaming, in bytes (default:
+                            2048)
 
     Client Options:
       -p <ADDRESS>:<PORT>, --peer <ADDRESS>:<PORT>
