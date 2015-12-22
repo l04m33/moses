@@ -38,6 +38,7 @@
 #
 
 import asyncio
+from concurrent.futures import FIRST_COMPLETED
 import ssl
 import functools
 import logging
@@ -98,6 +99,43 @@ def socks_recv_request(reader):
 
 
 @asyncio.coroutine
+def socks_handshake(reader, writer):
+    try:
+        method_list = yield from socks_recv_auth_method_list(reader)
+    except:
+        logger.debug(traceback.format_exc())
+        return None
+
+    if 0x0 not in method_list:
+        logger.debug('No proper method found')
+        yield from sync_write(writer, b'\x05\xff')
+        return None
+
+    yield from sync_write(writer, b'\x05\x00')
+
+    try:
+        command, addr_type, address, port = \
+                yield from socks_recv_request(reader)
+    except:
+        logger.debug(traceback.format_exc())
+        return None
+
+    if command != 0x01:     # XXX: only support the CONNECT command
+        logger.debug('Bad command: %d', command)
+        yield from sync_write(
+            writer, b'\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00')
+        return None
+
+    return (command, addr_type, address, port)
+
+
+@asyncio.coroutine
+def socks_handshake_done(socks_req, reader, writer):
+    yield from sync_write(
+        writer, b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+
+
+@asyncio.coroutine
 def sync_write(writer, data):
     writer.write(data)
     return (yield from writer.drain())
@@ -117,103 +155,70 @@ def streaming(reader, writer, block_size):
 
 
 @asyncio.coroutine
-def server_connection_cb(reader, writer, bs=DEFAULT_BLOCK_SIZE):
-    try:
-        method_list = yield from socks_recv_auth_method_list(reader)
-    except:
-        logger.debug(traceback.format_exc())
-        writer.close()
-        return
-
-    if 0x0 not in method_list:
-        logger.debug('No proper method found')
-        yield from sync_write(writer, b'\x05\xff')
-        writer.close()
-
-    yield from sync_write(writer, b'\x05\x00')
-
-    try:
-        command, addr_type, address, port = \
-                yield from socks_recv_request(reader)
-    except:
-        logger.debug(traceback.format_exc())
-        writer.close()
-        return
-
-    logger.debug('Connecting to %s:%d', address, port)
-
-    if command != 0x01:     # XXX: only support the CONNECT command
-        logger.debug('Bad command: %d', command)
-        yield from sync_write(
-            writer, b'\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00')
-        writer.close()
-        return
-
-    connect_op = asyncio.async(asyncio.open_connection(address, port))
+def do_connect(addr, port, ssl=None):
+    connect_op = asyncio.async(asyncio.open_connection(addr, port, ssl=ssl))
     try:
         proxy_reader, proxy_writer = \
                 yield from asyncio.wait_for(connect_op, None)
     except:
         connect_op.cancel()     # for python version < 3.4.3
         logger.debug(traceback.format_exc())
+        return None
+    return (proxy_reader, proxy_writer)
+
+
+@asyncio.coroutine
+def do_streaming(reader, writer, remote_reader, remote_writer, bs):
+    stream_up = asyncio.async(streaming(reader, remote_writer, bs))
+    stream_down = asyncio.async(streaming(remote_reader, writer, bs))
+
+    done, pending = yield from \
+            asyncio.wait([stream_up, stream_down], return_when=FIRST_COMPLETED)
+
+    for f in done:
+        try:
+            f.result()
+        except:
+            logger.debug(traceback.format_exc())
+
+    for f in pending:
+        f.cancel()
+
+
+@asyncio.coroutine
+def server_connection_cb(reader, writer, bs=DEFAULT_BLOCK_SIZE):
+    socks_req = yield from socks_handshake(reader, writer)
+    if socks_req is None:
         writer.close()
         return
 
-    yield from sync_write(
-        writer, b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+    command, addr_type, address, port = socks_req
 
-    stream_up = asyncio.async(streaming(reader, proxy_writer, bs))
-    stream_down = asyncio.async(streaming(proxy_reader, writer, bs))
+    logger.debug('Connecting to %s:%d', address, port)
 
-    try:
-        st_down_stat = yield from asyncio.wait_for(stream_down, None)
-    except:
-        stream_down.cancel()
-        logger.debug(traceback.format_exc())
+    remote_rw = yield from do_connect(address, port)
+    if remote_rw is None:
+        writer.close()
+        return
 
-    if stream_up.done():
-        try:
-            stream_up.result()
-        except:
-            logger.debug(traceback.format_exc())
-    else:
-        stream_up.cancel()
+    yield from socks_handshake_done(socks_req, reader, writer)
 
-    proxy_writer.close()
+    yield from do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
+
+    remote_rw[1].close()
     writer.close()
 
 
 @asyncio.coroutine
 def client_connection_cb(reader, writer, server_addr, bs=DEFAULT_BLOCK_SIZE, ssl_ctx=None):
-    connect_op = asyncio.async(
-        asyncio.open_connection(server_addr[0], server_addr[1], ssl=ssl_ctx))
-    try:
-        proxy_reader, proxy_writer = \
-                yield from asyncio.wait_for(connect_op, None)
-    except:
-        connect_op.cancel()     # for python version < 3.4.3
-        logger.debug(traceback.format_exc())
+    remote_rw = yield from do_connect(server_addr[0], server_addr[1], ssl=ssl_ctx)
+    if remote_rw is None:
         writer.close()
         return
 
-    stream_up = asyncio.async(streaming(reader, proxy_writer, bs))
-    stream_down = asyncio.async(streaming(proxy_reader, writer, bs))
+    yield from do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
 
-    try:
-        st_up_stat = yield from asyncio.wait_for(stream_up, None)
-    except:
-        stream_up.cancel()
-        logger.debug(traceback.format_exc())
-
-    if stream_down.done():
-        try:
-            stream_down.result()
-        except:
-            logger.debug(traceback.format_exc())
-    else:
-        stream_down.cancel()
-
-    proxy_writer.close()
+    remote_rw[1].close()
     writer.close()
 
 
