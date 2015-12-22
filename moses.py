@@ -238,7 +238,11 @@ def server_main(loop, args):
 
     cb = functools.partial(server_connection_cb, bs=args.block_size)
 
-    ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
+    if args.no_tls:
+        logger.warning('Connections from clients are NOT encrypted')
+        ssl_ctx = None
+    else:
+        ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
 
     local_ip, local_port = parse_ip_port(args.bind)
     starter = asyncio.start_server(cb, local_ip, local_port,
@@ -263,7 +267,12 @@ def client_main(loop, args):
         logger.error('Bad peer address: %s', args.peer)
         sys.exit(1)
 
-    ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
+    if args.no_tls:
+        logger.warning('Connections to the server are NOT encrypted')
+        ssl_ctx = None
+    else:
+        ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
+
     cb = functools.partial(client_connection_cb,
             server_addr=server_addr,
             bs=args.block_size,
@@ -295,6 +304,9 @@ def parse_arguments():
             help='IP & port to bind (default: <all interfaces>:1080)',
             default=':1080',
             type=str)
+    common_group.add_argument('-n', '--no-tls',
+            help='Do not use TLS encryption',
+            action='store_true')
     common_group.add_argument('-l', '--local-cert',
             help='Local SSL certificates (default: ./local.pem)',
             default='./local.pem',
