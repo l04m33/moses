@@ -236,7 +236,17 @@ def build_ssl_ctx(my_certs_file, peer_certs_file):
 def server_main(loop, args):
     logger.info('Moses server listening at %s', args.bind)
 
-    cb = functools.partial(server_connection_cb, bs=args.block_size)
+    if args.forward is not None:
+        logger.info('Forwarding client connections to %s', args.forward)
+        try:
+            forward_addr = parse_ip_port(args.forward)
+        except:
+            logger.error('Bad forwarding address: %s', args.forward)
+            sys.exit(1)
+        cb = functools.partial(client_connection_cb,
+                server_addr=forward_addr, bs=args.block_size)
+    else:
+        cb = functools.partial(server_connection_cb, bs=args.block_size)
 
     if args.no_tls:
         logger.warning('Connections from clients are NOT encrypted')
@@ -337,6 +347,13 @@ def parse_arguments():
     client_group.add_argument('-p', '--peer',
             metavar='<ADDRESS>:<PORT>',
             help='Peer (server) address',
+            type=str)
+
+    server_group = parser.add_argument_group('Server Options')
+
+    server_group.add_argument('-f', '--forward',
+            metavar='<ADDRESS>:<PORT>',
+            help='Simply forward all connections to the given address',
             type=str)
 
     return parser.parse_args()
