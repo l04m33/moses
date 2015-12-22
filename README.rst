@@ -13,10 +13,11 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
 .. code-block:: txt
 
     ❯ ./moses.py -h
-    usage: moses.py [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-l LOCAL_CERT]
+    usage: moses.py [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-n] [-l LOCAL_CERT]
                     [-r REMOTE_CERT] [--backlog BACKLOG]
                     [--loglevel {critical,fatal,error,warning,info,debug}]
                     [--block-size BLOCK_SIZE] [-p <ADDRESS>:<PORT>]
+                    [-f <ADDRESS>:<PORT>]
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -26,6 +27,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
       -s, --server          Server mode
       -b <ADDRESS>:<PORT>, --bind <ADDRESS>:<PORT>
                             IP & port to bind (default: <all interfaces>:1080)
+      -n, --no-tls          Do not use TLS encryption
       -l LOCAL_CERT, --local-cert LOCAL_CERT
                             Local SSL certificates (default: ./local.pem)
       -r REMOTE_CERT, --remote-cert REMOTE_CERT
@@ -41,6 +43,13 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
       -p <ADDRESS>:<PORT>, --peer <ADDRESS>:<PORT>
                             Peer (server) address
 
+    Server Options:
+      -f <ADDRESS>:<PORT>, --forward <ADDRESS>:<PORT>
+                            Simply forward all connections to the given address
+
+Socks5 代理
+###########
+
 启动服务器：
 
 .. code-block:: sh
@@ -54,6 +63,21 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
 
     ./moses.py -c -b 127.0.0.1:1080 -p some.server.addr.ess:32000 \
                -l client_key.pem -r server_cert.pem
+
+转发 HTTP 代理
+##############
+
+Moses 本身没有实现 HTTP 代理，不过你可以用 Moses 将 HTTP 代理请求转
+发到其他 HTTP 代理程序（例如 Privoxy_ ）上。假设你的服务器在 8118 端
+口上配置了一个 Privoxy 实例，这样启动 Moses 服务器即可：
+
+.. code-block:: sh
+
+    ./moses.py -s -b some.server.addr.ess:32000 \
+               -f 127.0.0.1:8118 \
+               -l server_key.pem -r client_cert.pem
+
+.. _Privoxy: http://www.privoxy.org/
 
 License
 #######
