@@ -14,7 +14,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
 
     ❯ ./moses.py -h
     usage: moses.py [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-n] [-l LOCAL_CERT]
-                    [-r REMOTE_CERT] [--backlog BACKLOG]
+                    [-r REMOTE_CERT] [-e CIPHERS] [--backlog BACKLOG]
                     [--loglevel {critical,fatal,error,warning,info,debug}]
                     [--block-size BLOCK_SIZE] [-p <ADDRESS>:<PORT>]
                     [-f <ADDRESS>:<PORT>]
@@ -32,6 +32,9 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
                             Local SSL certificates (default: ./local.pem)
       -r REMOTE_CERT, --remote-cert REMOTE_CERT
                             Remote SSL certificates (default: ./remote.pem)
+      -e CIPHERS, --ciphers CIPHERS
+                            Ciphers to use for encryption. Run `openssl ciphers`
+                            to see available ciphers
       --backlog BACKLOG     Backlog for the listening socket (default: 128)
       --loglevel {critical,fatal,error,warning,info,debug}
                             Log level (default: info)
