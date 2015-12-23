@@ -164,6 +164,11 @@ def do_connect(addr, port, ssl=None):
         connect_op.cancel()     # for python version < 3.4.3
         logger.debug(traceback.format_exc())
         return None
+
+    if ssl is not None:
+        cur_cipher = proxy_writer.get_extra_info('cipher')
+        logger.debug('Current cipher: %s', cur_cipher)
+
     return (proxy_reader, proxy_writer)
 
 
