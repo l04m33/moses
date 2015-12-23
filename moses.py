@@ -227,8 +227,10 @@ def client_connection_cb(reader, writer, server_addr, bs=DEFAULT_BLOCK_SIZE, ssl
     writer.close()
 
 
-def build_ssl_ctx(my_certs_file, peer_certs_file):
+def build_ssl_ctx(my_certs_file, peer_certs_file, ciphers=None):
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+    if ciphers is not None:
+        ssl_ctx.set_ciphers(ciphers)
     ssl_ctx.options |= ssl.OP_NO_SSLv2
     ssl_ctx.options |= ssl.OP_NO_SSLv3
     ssl_ctx.verify_mode = ssl.CERT_REQUIRED
@@ -257,7 +259,7 @@ def server_main(loop, args):
         logger.warning('Connections from clients are NOT encrypted')
         ssl_ctx = None
     else:
-        ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
+        ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert, args.ciphers)
 
     local_ip, local_port = parse_ip_port(args.bind)
     starter = asyncio.start_server(cb, local_ip, local_port,
@@ -286,7 +288,7 @@ def client_main(loop, args):
         logger.warning('Connections to the server are NOT encrypted')
         ssl_ctx = None
     else:
-        ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert)
+        ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert, args.ciphers)
 
     cb = functools.partial(client_connection_cb,
             server_addr=server_addr,
@@ -329,6 +331,10 @@ def parse_arguments():
     common_group.add_argument('-r', '--remote-cert',
             help='Remote SSL certificates (default: ./remote.pem)',
             default='./remote.pem',
+            type=str)
+    common_group.add_argument('-e', '--ciphers',
+            help='Ciphers to use for encryption. '
+                 'Run `openssl ciphers` to see available ciphers',
             type=str)
     common_group.add_argument('--backlog',
             help='Backlog for the listening socket (default: 128)',
