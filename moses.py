@@ -377,7 +377,9 @@ def parse_ip_port(addr_str):
 
 def main():
     args = parse_arguments()
-    logging.basicConfig(level=args.loglevel.upper())
+    logging.basicConfig(
+            level=args.loglevel.upper(),
+            format='%(asctime)s:%(levelname)s:%(name)s:%(message)s')
 
     loop = asyncio.get_event_loop()
 
