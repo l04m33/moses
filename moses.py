@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 
 #
 # Moses: A simple Socks5 proxy that encrypts your connections using TLS.
