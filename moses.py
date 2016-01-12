@@ -53,6 +53,10 @@ DEFAULT_BLOCK_SIZE = 2048
 logger = logging.getLogger(__file__)
 
 
+class VersionNotSupportedError(Exception):
+    pass
+
+
 def socks_check_version(ver):
     if ver != 0x05:
         logger.debug('Protocol version %d not supported', ver)
@@ -102,28 +106,24 @@ def socks_recv_request(reader):
 def socks_handshake(reader, writer):
     try:
         method_list = yield from socks_recv_auth_method_list(reader)
-    except:
-        logger.debug(traceback.format_exc())
-        return None
 
-    if 0x0 not in method_list:
-        logger.debug('No proper method found')
-        yield from sync_write(writer, b'\x05\xff')
-        return None
+        if 0x0 not in method_list:
+            logger.debug('No proper method found')
+            yield from sync_write(writer, b'\x05\xff')
+            return None
 
-    yield from sync_write(writer, b'\x05\x00')
+        yield from sync_write(writer, b'\x05\x00')
 
-    try:
         command, addr_type, address, port = \
                 yield from socks_recv_request(reader)
+
+        if command not in supported_socks_commands:
+            logger.debug('Bad command: %d', command)
+            yield from sync_write(
+                writer, b'\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00')
+            return None
     except:
         logger.debug(traceback.format_exc())
-        return None
-
-    if command != 0x01:     # XXX: only support the CONNECT command
-        logger.debug('Bad command: %d', command)
-        yield from sync_write(
-            writer, b'\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00')
         return None
 
     return (command, addr_type, address, port)
@@ -191,13 +191,8 @@ def do_streaming(reader, writer, remote_reader, remote_writer, bs):
 
 
 @asyncio.coroutine
-def server_connection_cb(reader, writer, bs=DEFAULT_BLOCK_SIZE):
-    socks_req = yield from socks_handshake(reader, writer)
-    if socks_req is None:
-        writer.close()
-        return
-
-    command, addr_type, address, port = socks_req
+def cmd_connect(socks_req, reader, writer, params):
+    _command, _addr_type, address, port = socks_req
 
     logger.debug('Connecting to %s:%d', address, port)
 
@@ -206,16 +201,37 @@ def server_connection_cb(reader, writer, bs=DEFAULT_BLOCK_SIZE):
         writer.close()
         return
 
-    yield from socks_handshake_done(socks_req, reader, writer)
+    bs = params.get('bs', DEFAULT_BLOCK_SIZE)
+    try:
+        yield from socks_handshake_done(socks_req, reader, writer)
+        yield from do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
+    finally:
+        remote_rw[1].close()
 
-    yield from do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
 
-    remote_rw[1].close()
-    writer.close()
+supported_socks_commands = {
+    0x01: cmd_connect,
+}
 
 
 @asyncio.coroutine
-def client_connection_cb(reader, writer, server_addr, bs=DEFAULT_BLOCK_SIZE, ssl_ctx=None):
+def server_connection_cb(reader, writer, params):
+    socks_req = yield from socks_handshake(reader, writer)
+    if socks_req is None:
+        writer.close()
+        return
+
+    cmd_handler = supported_socks_commands[socks_req[0]]
+
+    yield from cmd_handler(socks_req, reader, writer, params)
+
+
+@asyncio.coroutine
+def client_connection_cb(reader, writer, params):
+    server_addr = params['server_addr']
+    bs = params.get('bs', DEFAULT_BLOCK_SIZE)
+    ssl_ctx = params.get('ssl_ctx', None)
+
     remote_rw = yield from do_connect(server_addr[0], server_addr[1], ssl=ssl_ctx)
     if remote_rw is None:
         writer.close()
@@ -250,10 +266,14 @@ def server_main(loop, args):
         except:
             logger.error('Bad forwarding address: %s', args.forward)
             sys.exit(1)
-        cb = functools.partial(client_connection_cb,
-                server_addr=forward_addr, bs=args.block_size)
+        params = {
+            'server_addr': forward_addr,
+            'bs': args.block_size,
+        }
+        cb = functools.partial(client_connection_cb, params=params)
     else:
-        cb = functools.partial(server_connection_cb, bs=args.block_size)
+        params = { 'bs': args.block_size }
+        cb = functools.partial(server_connection_cb, params=params)
 
     if args.no_tls:
         logger.warning('Connections from clients are NOT encrypted')
@@ -290,10 +310,12 @@ def client_main(loop, args):
     else:
         ssl_ctx = build_ssl_ctx(args.local_cert, args.remote_cert, args.ciphers)
 
-    cb = functools.partial(client_connection_cb,
-            server_addr=server_addr,
-            bs=args.block_size,
-            ssl_ctx=ssl_ctx)
+    params = {
+        'server_addr': server_addr,
+        'bs': args.block_size,
+        'ssl_ctx': ssl_ctx,
+    }
+    cb = functools.partial(client_connection_cb, params=params)
 
     local_ip, local_port = parse_ip_port(args.bind)
     starter = asyncio.start_server(cb, local_ip, local_port,
