@@ -45,6 +45,7 @@ import logging
 import traceback
 import argparse
 import sys
+import struct
 
 
 DEFAULT_BLOCK_SIZE = 2048
@@ -55,6 +56,26 @@ logger = logging.getLogger(__file__)
 
 class VersionNotSupportedError(Exception):
     pass
+
+
+class UDPRelayProtocol(asyncio.Protocol):
+    def __init__(self, stream_down):
+        super().__init__()
+        self._stream_down = stream_down
+
+    def connection_made(self, transport):
+        self._transport = transport
+
+    def datagram_received(self, data, _addr):
+        data_len = struct.pack('>H', len(data))
+        self._stream_down.write(data_len)
+        self._stream_down.write(data)
+
+    def error_received(self, exc):
+        logger.debug('error_received: %a', exc)
+
+    def connection_lost(self, exc):
+        logger.debug('connection_lost: %a', exc)
 
 
 def socks_check_version(ver):
@@ -209,8 +230,36 @@ def cmd_connect(socks_req, reader, writer, params):
         remote_rw[1].close()
 
 
+@asyncio.coroutine
+def cmd_udp_relay(socks_req, reader, writer, params):
+    _command, _addr_type, address, port = socks_req
+
+    logger.debug('Relaying UDP packets to %s:%d', address, port)
+
+    loop = asyncio.get_event_loop()
+    relay_transport, _relay_protocol = \
+            yield from loop.create_datagram_endpoint(
+                    lambda: UDPRelayProtocol(writer),
+                    remote_addr=(address, port))
+
+    try:
+        yield from socks_handshake_done(socks_req, reader, writer)
+        while True:
+            data_len_buf = yield from reader.readexactly(2)
+            data_len, = struct.unpack('>H', data_len_buf)
+            data = yield from reader.readexactly(data_len)
+            relay_transport.sendto(data)
+    except asyncio.IncompleteReadError:
+        logger.debug('UDP_RELAY connection terminated')
+    except:
+        logger.debug(traceback.format_exc())
+    finally:
+        relay_transport.close()
+
+
 supported_socks_commands = {
     0x01: cmd_connect,
+    0x81: cmd_udp_relay,
 }
 
 
