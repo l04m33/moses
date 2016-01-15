@@ -68,6 +68,7 @@ class UDPRelayProtocol(asyncio.Protocol):
 
     def datagram_received(self, data, _addr):
         data_len = struct.pack('>H', len(data))
+        # TODO: flow control?
         self._stream_down.write(data_len)
         self._stream_down.write(data)
 
