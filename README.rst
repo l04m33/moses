@@ -82,6 +82,30 @@ Moses 本身没有实现 HTTP 代理，不过你可以用 Moses 将 HTTP 代理�
 
 .. _Privoxy: http://www.privoxy.org/
 
+Linux 下的全局透明代理
+######################
+
+``staff.py`` 是一个透明代理脚本，通过与 ``moses.py`` 配合可以自动转发
+所有 DNS 请求和 TCP 连接， poor man's VPN :)
+
+使用方法（假设 Moses 客户端运行在 127.0.0.1:1080 上）：
+
+.. code-block:: sh
+
+    ./staff.py -p 127.0.0.1:1080
+
+然后用 iptables 添加这三条规则：
+
+.. code-block:: sh
+
+    iptables -t nat -I OUTPUT -o eth0 -p udp --dport 53  -j DNAT --to 127.0.0.1:32000
+    iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 80  -j DNAT --to 127.0.0.1:32000
+    iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 443 -j DNAT --to 127.0.0.1:32000
+
+这样所有 DNS 请求和目标端口是 80、443 的 TCP 连接都会走 Moses 代理。
+
+要查看其他选项的用法，执行 ``./staff.py -h`` .
+
 License
 #######
 
