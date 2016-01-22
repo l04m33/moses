@@ -79,7 +79,8 @@ class UDPRelayProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         dns = random.choice(self._dns)
         fut = asyncio.async(
-                forward_udp_msg_up(data, addr, dns, self._proxy, self._transport))
+                forward_udp_msg_up(
+                    data, addr, dns, self._proxy, self._transport))
         fut.add_done_callback(forward_udp_msg_up_done)
 
     def error_received(self, exc):
@@ -103,23 +104,27 @@ def parse_dns_servers(dns_str):
 def open_socks_connection(proxy, cmd, dst):
     reader, writer = yield from asyncio.open_connection(proxy[0], proxy[1])
 
-    writer.write(b'\x05\x01\x00')
-    yield from writer.drain()
+    try:
+        writer.write(b'\x05\x01\x00')
+        yield from writer.drain()
 
-    res = yield from reader.readexactly(2)
-    assert res == b'\x05\x00'
+        res = yield from reader.readexactly(2)
+        assert res == b'\x05\x00'
 
-    if isinstance(dst[0], str):
-        addr_buf = socket.inet_aton(dst[0])
-        port_buf = dst[1].to_bytes(2, 'big')
-    else:
-        addr_buf = dst[0].to_bytes(4, sys.byteorder)
-        port_buf = dst[1].to_bytes(2, sys.byteorder)
-    writer.write(b'\x05' + cmd.to_bytes(1, sys.byteorder) +
-            b'\x00\x01' + addr_buf + port_buf)
+        if isinstance(dst[0], str):
+            addr_buf = socket.inet_aton(dst[0])
+            port_buf = dst[1].to_bytes(2, 'big')
+        else:
+            addr_buf = dst[0].to_bytes(4, sys.byteorder)
+            port_buf = dst[1].to_bytes(2, sys.byteorder)
+        writer.write(b'\x05' + cmd.to_bytes(1, sys.byteorder) +
+                b'\x00\x01' + addr_buf + port_buf)
 
-    res = yield from reader.readexactly(10)
-    assert res == b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00'
+        res = yield from reader.readexactly(10)
+        assert res == b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00'
+    except:
+        writer.close()
+        raise
 
     return (reader, writer)
 
@@ -133,18 +138,22 @@ def forward_udp_msg_down(reader, transport, dst):
     logger.debug('Got UDP msg for %a', dst)
 
 
+def clean_up_bad_conn(dst, exc):
+    logger.debug(
+            'Lost the connection %s:%d to Moses server, cleaning up',
+            dst[0], dst[1])
+    conn_pool[dst].set_exception(exc)
+    # in case there's no coroutine waiting for this future,
+    # prevent asyncio from complaining about never retrieved exceptions
+    conn_pool[dst].exception()
+    del conn_pool[dst]
+
+
 def forward_udp_msg_down_done(fut, dst, conn):
     try:
         fut.result()
     except (asyncio.IncompleteReadError, asyncio.CancelledError) as exc:
-        logger.debug(
-                'Lost the connection %s:%d to Moses server, cleaning up',
-                dst[0], dst[1])
-        conn_pool[dst].set_exception(exc)
-        # in case there's no coroutine waiting for this future,
-        # prevent asyncio from complaining about never retrieved exceptions
-        conn_pool[dst].exception()
-        del conn_pool[dst]
+        clean_up_bad_conn(dst, exc)
         return
     except:
         logger.debug(traceback.format_exc())
@@ -168,7 +177,8 @@ def forward_udp_msg_up(msg, src, dst, proxy, transport):
         try:
             reader, writer = yield from asyncio.wait_for(conn_op, None)
         except Exception as exc:
-            conn_pool[dst].set_exception(exc)
+            # We still have the lock, clean it up ASAP
+            clean_up_bad_conn(dst, exc)
             raise
         logger.debug('Done creating UDP relay connection %a', dst)
 
@@ -261,19 +271,23 @@ def do_streaming(reader, writer, remote_reader, remote_writer, bs):
 def tcp_server_cb(reader, writer, proxy, bs):
     sock = writer.get_extra_info('socket')
 
+    orig_dst_buf = \
+            sock.getsockopt(
+                    socket.SOL_IP, SO_ORIGINAL_DST, ctypes.sizeof(sockaddr_in))
+    orig_dst = sockaddr_in.from_buffer_copy(orig_dst_buf)
+
+    logger.debug(
+            'orig_dst = (%d, %d)',
+            orig_dst.sin_addr.s_addr, orig_dst.sin_port)
+
     try:
-        orig_dst_buf = \
-                sock.getsockopt(
-                        socket.SOL_IP, SO_ORIGINAL_DST, ctypes.sizeof(sockaddr_in))
-        orig_dst = sockaddr_in.from_buffer_copy(orig_dst_buf)
-
-        logger.debug(
-                'orig_dst = (%d, %d)',
-                orig_dst.sin_addr.s_addr, orig_dst.sin_port)
-
         proxy_reader, proxy_writer = yield from open_socks_connection(
                 proxy, 0x01, (orig_dst.sin_addr.s_addr, orig_dst.sin_port))
+    except:
+        logger.debug(traceback.format_exc())
+        return
 
+    try:
         yield from do_streaming(reader, writer, proxy_reader, proxy_writer, bs)
     except:
         logger.debug(traceback.format_exc())
