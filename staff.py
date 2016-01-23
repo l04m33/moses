@@ -43,6 +43,7 @@ import random
 
 
 DEFAULT_BLOCK_SIZE = 2048
+DEFAULT_DNS_TIMEOUT = 5
 SO_ORIGINAL_DST = 80
 
 
@@ -67,10 +68,11 @@ class sockaddr_in(ctypes.Structure):
     ]
 
 
-class UDPRelayProtocol(asyncio.DatagramProtocol):
-    def __init__(self, proxy, dns_server, loop):
+class DNSRelayProtocol(asyncio.DatagramProtocol):
+    def __init__(self, proxy, dns_server, timeout, loop):
         self._proxy = proxy
         self._dns = dns_server
+        self._timeout = timeout
         self._loop = loop
 
     def connection_made(self, transport):
@@ -80,7 +82,8 @@ class UDPRelayProtocol(asyncio.DatagramProtocol):
         dns = random.choice(self._dns)
         fut = asyncio.async(
                 forward_dns_msg(
-                    data, addr, dns, self._proxy, self._transport))
+                    data, addr, dns, self._proxy,
+                    self._transport, self._timeout))
         fut.add_done_callback(forward_dns_msg_done)
 
     def error_received(self, exc):
@@ -177,7 +180,7 @@ def get_dns_conn(dst, proxy):
         # No existing connection found. Create a new one.
         conn_op = asyncio.async(open_socks_connection(proxy, 0x81, dst))
         conn_pool[dst] = asyncio.Future()
-        logger.debug('Creating UDP relay connection %a', dst)
+        logger.debug('Creating DNS relay connection %a', dst)
         try:
             reader, writer = yield from asyncio.wait_for(conn_op, None)
         except Exception as exc:
@@ -189,17 +192,17 @@ def get_dns_conn(dst, proxy):
         dispatch_op.add_done_callback(
                 functools.partial(
                     dns_resp_dispatcher_done, dst=dst, waiters=waiters))
-        logger.debug('Done creating UDP relay connection %a', dst)
+        logger.debug('Done creating DNS relay connection %a', dst)
 
     elif isinstance(conn, asyncio.Future):
         # Connecting or busy, we wait for the connection
-        logger.debug('Waiting for UDP relay connection %a', dst)
+        logger.debug('Waiting for DNS relay connection %a', dst)
         reader, writer, waiters = yield from asyncio.wait_for(conn, None)
         while isinstance(conn_pool[dst], asyncio.Future):
             logger.debug('Connection %a is busy. Keep waiting.', dst)
             reader, writer, waiters = \
                     yield from asyncio.wait_for(conn_pool[dst], None)
-        logger.debug('Acquired UDP relay connection %a', dst)
+        logger.debug('Acquired DNS relay connection %a', dst)
         conn_pool[dst] = asyncio.Future()
 
     else:
@@ -216,7 +219,7 @@ def put_dns_conn(dst, reader, writer, waiters):
 
 
 @asyncio.coroutine
-def forward_dns_msg(msg, src, dst, proxy, transport):
+def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     if len(msg) < 2:
         return
 
@@ -245,11 +248,18 @@ def forward_dns_msg(msg, src, dst, proxy, transport):
         raise
 
     logger.debug('UDP msg sent to %a', dst)
-    logger.debug('Releasing UDP relay connection %a', dst)
+    logger.debug('Releasing DNS relay connection %a', dst)
 
     put_dns_conn(dst, reader, writer, waiters)
 
-    resp_msg = yield from dns_waiter
+    try:
+        resp_msg = yield from asyncio.wait_for(dns_waiter, timeout)
+    except asyncio.TimeoutError:
+        logger.debug('DNS request %d timed out', dns_id)
+        if waiters[dns_id] == dns_waiter:
+            del waiters[dns_id]
+        raise
+
     logger.debug('Got DNS reply for %a', src)
     transport.sendto(resp_msg, addr=src)
 
@@ -263,10 +273,10 @@ def forward_dns_msg_done(fut):
     logger.debug('forward_dns_msg_done')
 
 
-def create_udp_server(loop, addr, port, proxy, dns_servers):
+def create_udp_server(loop, addr, port, proxy, dns_servers, timeout):
     logger.info('UDP server listening on %s:%d', addr, port)
     ep_op = loop.create_datagram_endpoint(
-            lambda: UDPRelayProtocol(proxy, dns_servers, loop),
+            lambda: DNSRelayProtocol(proxy, dns_servers, timeout, loop),
             local_addr=(addr, port), reuse_address=True)
     return loop.run_until_complete(ep_op)
 
@@ -370,6 +380,10 @@ def parse_arguments():
             help='Block size for data streaming, in bytes (default: 2048)',
             default=DEFAULT_BLOCK_SIZE,
             type=int)
+    parser.add_argument('--dns-timeout',
+            help='Timeout for DNS requests, in seconds (default: 5.0)',
+            default=DEFAULT_DNS_TIMEOUT,
+            type=float)
     parser.add_argument('--backlog',
             help='Backlog for the listening socket (default: 128)',
             default=128,
@@ -398,7 +412,8 @@ def main():
             create_udp_server(
                     loop, '127.0.0.1', args.udp_port,
                     parse_ip_port(args.proxy),
-                    parse_dns_servers(args.dns))
+                    parse_dns_servers(args.dns),
+                    args.dns_timeout)
 
     _server = \
             create_tcp_server(
