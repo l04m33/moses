@@ -79,9 +79,9 @@ class UDPRelayProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         dns = random.choice(self._dns)
         fut = asyncio.async(
-                forward_udp_msg_up(
+                forward_dns_msg(
                     data, addr, dns, self._proxy, self._transport))
-        fut.add_done_callback(forward_udp_msg_up_done)
+        fut.add_done_callback(forward_dns_msg_done)
 
     def error_received(self, exc):
         logger.debug(exc)
@@ -129,15 +129,6 @@ def open_socks_connection(proxy, cmd, dst):
     return (reader, writer)
 
 
-@asyncio.coroutine
-def forward_udp_msg_down(reader, transport, dst):
-    msg_len_buf = yield from reader.readexactly(2)
-    msg_len, = struct.unpack('>H', msg_len_buf)
-    msg = yield from reader.readexactly(msg_len)
-    transport.sendto(msg, addr=dst)
-    logger.debug('Got UDP msg for %a', dst)
-
-
 def clean_up_bad_conn(dst, exc):
     logger.debug(
             'Lost the connection %s:%d to Moses server, cleaning up',
@@ -149,24 +140,37 @@ def clean_up_bad_conn(dst, exc):
     del conn_pool[dst]
 
 
-def forward_udp_msg_down_done(fut, dst, conn):
+@asyncio.coroutine
+def dns_resp_dispatcher(reader, waiters):
+    while True:
+        msg_len_buf = yield from reader.readexactly(2)
+        msg_len, = struct.unpack('>H', msg_len_buf)
+
+        assert msg_len > 2
+
+        msg = yield from reader.readexactly(msg_len)
+        dns_id, = struct.unpack_from('>H', msg)
+        logger.debug('Got DNS msg for ID %d', dns_id)
+
+        w = waiters.get(dns_id)
+        if isinstance(w, asyncio.Future):
+            del waiters[dns_id]
+            w.set_result(msg)
+
+
+def dns_resp_dispatcher_done(fut, dst, waiters):
     try:
         fut.result()
-    except (asyncio.IncompleteReadError, asyncio.CancelledError) as exc:
-        clean_up_bad_conn(dst, exc)
-        return
-    except:
+    except Exception as exc:
         logger.debug(traceback.format_exc())
-
-    logger.debug('Releasing UDP relay connection %a', dst)
-
-    waiter = conn_pool[dst]
-    conn_pool[dst] = conn
-    waiter.set_result(conn)
+        logger.debug(
+                "DNS response dispatcher for %a terminated, cleaning up", dst)
+        for _, w in waiters.items():
+            w.set_exception(exc)
 
 
 @asyncio.coroutine
-def forward_udp_msg_up(msg, src, dst, proxy, transport):
+def get_dns_conn(dst, proxy):
     conn = conn_pool.get(dst)
 
     if conn is None:
@@ -180,26 +184,55 @@ def forward_udp_msg_up(msg, src, dst, proxy, transport):
             # We still have the lock, clean it up ASAP
             clean_up_bad_conn(dst, exc)
             raise
+        waiters = {}
+        dispatch_op = asyncio.async(dns_resp_dispatcher(reader, waiters))
+        dispatch_op.add_done_callback(
+                functools.partial(
+                    dns_resp_dispatcher_done, dst=dst, waiters=waiters))
         logger.debug('Done creating UDP relay connection %a', dst)
 
     elif isinstance(conn, asyncio.Future):
         # Connecting or busy, we wait for the connection
         logger.debug('Waiting for UDP relay connection %a', dst)
-        reader, writer = yield from asyncio.wait_for(conn, None)
+        reader, writer, waiters = yield from asyncio.wait_for(conn, None)
         while isinstance(conn_pool[dst], asyncio.Future):
             logger.debug('Connection %a is busy. Keep waiting.', dst)
-            reader, writer = yield from asyncio.wait_for(conn_pool[dst], None)
+            reader, writer, waiters = \
+                    yield from asyncio.wait_for(conn_pool[dst], None)
         logger.debug('Acquired UDP relay connection %a', dst)
         conn_pool[dst] = asyncio.Future()
 
     else:
-        reader, writer = conn
+        reader, writer, waiters = conn
         conn_pool[dst] = asyncio.Future()
 
-    fut = asyncio.async(forward_udp_msg_down(reader, transport, src))
-    fut.add_done_callback(
-            functools.partial(
-                forward_udp_msg_down_done, dst=dst, conn=(reader, writer)))
+    return (reader, writer, waiters)
+
+
+def put_dns_conn(dst, reader, writer, waiters):
+    waiter = conn_pool[dst]
+    conn_pool[dst] = (reader, writer, waiters) # TODO: where's the dispatcher coroutine?
+    waiter.set_result(conn_pool[dst])
+
+
+@asyncio.coroutine
+def forward_dns_msg(msg, src, dst, proxy, transport):
+    if len(msg) < 2:
+        return
+
+    reader, writer, waiters = yield from get_dns_conn(dst, proxy)
+
+    dns_id, = struct.unpack_from('>H', msg)
+    logger.debug('dns_id = %d', dns_id)
+
+    old_waiter = waiters.get(dns_id)
+    if old_waiter is not None:
+        logger.debug(
+                'Previous request for ID %d is still pending, cancelling',
+                dns_id)
+        old_waiter.cancel()
+    dns_waiter = asyncio.Future()
+    waiters[dns_id] = dns_waiter
 
     msg_len = struct.pack('>H', len(msg))
     writer.write(msg_len)
@@ -207,19 +240,27 @@ def forward_udp_msg_up(msg, src, dst, proxy, transport):
     try:
         yield from writer.drain()
     except Exception as exc:
-        fut.cancel()
+        clean_up_bad_conn(dst, exc)
+        del waiters[dns_id]
         raise
 
     logger.debug('UDP msg sent to %a', dst)
+    logger.debug('Releasing UDP relay connection %a', dst)
+
+    put_dns_conn(dst, reader, writer, waiters)
+
+    resp_msg = yield from dns_waiter
+    logger.debug('Got DNS reply for %a', src)
+    transport.sendto(resp_msg, addr=src)
 
 
-def forward_udp_msg_up_done(fut):
+def forward_dns_msg_done(fut):
     try:
         fut.result()
     except:
         logger.debug(traceback.format_exc())
 
-    logger.debug('forward_udp_msg_up_done')
+    logger.debug('forward_dns_msg_done')
 
 
 def create_udp_server(loop, addr, port, proxy, dns_servers):
