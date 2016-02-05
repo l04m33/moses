@@ -273,7 +273,10 @@ def server_connection_cb(reader, writer, params):
 
     cmd_handler = supported_socks_commands[socks_req[0]]
 
-    yield from cmd_handler(socks_req, reader, writer, params)
+    try:
+        yield from cmd_handler(socks_req, reader, writer, params)
+    finally:
+        writer.close()
 
 
 @asyncio.coroutine

@@ -336,14 +336,12 @@ def tcp_server_cb(reader, writer, proxy, bs):
                 proxy, 0x01, (orig_dst.sin_addr.s_addr, orig_dst.sin_port))
     except:
         logger.debug(traceback.format_exc())
+        writer.close()
         return
 
-    try:
-        yield from do_streaming(reader, writer, proxy_reader, proxy_writer, bs)
-    except:
-        logger.debug(traceback.format_exc())
-    finally:
-        proxy_writer.close()
+    yield from do_streaming(reader, writer, proxy_reader, proxy_writer, bs)
+    proxy_writer.close()
+    writer.close()
 
 
 def create_tcp_server(loop, addr, port, proxy, backlog, bs):
