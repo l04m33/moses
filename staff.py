@@ -151,7 +151,7 @@ def clean_up_bad_conn(dst, exc):
 
 
 @asyncio.coroutine
-def dns_resp_dispatcher(reader, waiters):
+def dns_resp_dispatcher(reader, waiters, id_map):
     while True:
         msg_len_buf = yield from reader.readexactly(2)
         msg_len, = struct.unpack('>H', msg_len_buf)
@@ -159,13 +159,17 @@ def dns_resp_dispatcher(reader, waiters):
         assert msg_len > 2
 
         msg = yield from reader.readexactly(msg_len)
-        dns_id, = struct.unpack_from('>H', msg)
-        logger.debug('Got DNS msg for ID %d', dns_id)
+        relay_dns_id, = struct.unpack_from('>H', msg)
+        logger.debug('Got relayed DNS msg for ID %d', relay_dns_id)
 
-        w = waiters.get(dns_id)
-        if isinstance(w, asyncio.Future):
-            del waiters[dns_id]
-            w.set_result(msg)
+        waiter_key = id_map.get(relay_dns_id)
+        if waiter_key is not None:
+            w = waiters.get(waiter_key)
+            if isinstance(w, asyncio.Future):
+                del waiters[waiter_key]
+                w.set_result(msg)
+            del id_map[relay_dns_id]
+            logger.debug('Current id_map size: %d', len(id_map))
 
 
 def dns_resp_dispatcher_done(fut, dst, waiters):
@@ -195,11 +199,12 @@ def get_dns_conn(dst, proxy):
             clean_up_bad_conn(dst, exc)
             raise
         waiters = {}
-        dispatch_op = asyncio.async(dns_resp_dispatcher(reader, waiters))
+        id_map = {}
+        dispatch_op = \
+                asyncio.async(dns_resp_dispatcher(reader, waiters, id_map))
         dispatch_op.add_done_callback(
                 functools.partial(
                     dns_resp_dispatcher_done, dst=dst, waiters=waiters))
-        id_map = {}
         conn = DNSRelayConnection(reader, writer, waiters, id_map)
         logger.debug('Done creating DNS relay connection %a', dst)
 
@@ -225,6 +230,13 @@ def put_dns_conn(dst, relay_conn):
     waiter.set_result(conn_pool[dst])
 
 
+def gen_dns_id(id_map):
+    i = random.randint(0, 65535)
+    while i in id_map:
+        i = random.randint(0, 65535)
+    return i
+
+
 @asyncio.coroutine
 def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     if len(msg) < 2:
@@ -236,23 +248,29 @@ def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     dns_id, = struct.unpack_from('>H', msg)
     logger.debug('dns_id = %d', dns_id)
 
-    old_waiter = waiters.get(dns_id)
+    waiter_key = (src, dns_id)
+    old_waiter = waiters.get(waiter_key)
     if old_waiter is not None:
         logger.debug(
-                'Previous request for ID %d is still pending, cancelling',
-                dns_id)
+                'Previous request from %r for ID %d is still pending, cancelling',
+                src, dns_id)
         old_waiter.cancel()
     dns_waiter = asyncio.Future()
-    waiters[dns_id] = dns_waiter
+    waiters[waiter_key] = dns_waiter
+
+    relay_dns_id = gen_dns_id(id_map)
+    id_map[relay_dns_id] = waiter_key
+    logger.debug('relay_dns_id = %d', relay_dns_id)
 
     msg_len = struct.pack('>H', len(msg))
     writer.write(msg_len)
-    writer.write(msg)
+    writer.write(struct.pack('>H', relay_dns_id) + msg[2:])
     try:
         yield from writer.drain()
     except Exception as exc:
         clean_up_bad_conn(dst, exc)
-        del waiters[dns_id]
+        del waiters[waiter_key]
+        del id_map[relay_dns_id]
         raise
 
     logger.debug('UDP msg sent to %a', dst)
@@ -263,13 +281,17 @@ def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     try:
         resp_msg = yield from asyncio.wait_for(dns_waiter, timeout)
     except asyncio.TimeoutError:
-        logger.debug('DNS request %d timed out', dns_id)
-        if waiters[dns_id] == dns_waiter:
-            del waiters[dns_id]
+        logger.debug('DNS request %d from %r timed out', dns_id, src)
+        if waiters[waiter_key] == dns_waiter:
+            del waiters[waiter_key]
+        del id_map[relay_dns_id]
+        raise
+    except:
+        del id_map[relay_dns_id]
         raise
 
-    logger.debug('Got DNS reply for %a', src)
-    transport.sendto(resp_msg, addr=src)
+    logger.debug('Got DNS reply for %a, dns_id = %d', src, dns_id)
+    transport.sendto(msg[:2] + resp_msg[2:], addr=src)
 
 
 def forward_dns_msg_done(fut):
