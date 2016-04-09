@@ -40,6 +40,7 @@ import logging
 import traceback
 import sys
 import random
+import collections
 
 
 DEFAULT_BLOCK_SIZE = 2048
@@ -51,6 +52,12 @@ logger = logging.getLogger(__file__)
 
 
 conn_pool = {}
+
+
+DNSRelayConnection = \
+        collections.namedtuple(
+                'DNSRelayConnection',
+                ('reader', 'writer', 'waiters', 'id_map'))
 
 
 class sin_addr(ctypes.Structure):
@@ -192,29 +199,29 @@ def get_dns_conn(dst, proxy):
         dispatch_op.add_done_callback(
                 functools.partial(
                     dns_resp_dispatcher_done, dst=dst, waiters=waiters))
+        id_map = {}
+        conn = DNSRelayConnection(reader, writer, waiters, id_map)
         logger.debug('Done creating DNS relay connection %a', dst)
 
     elif isinstance(conn, asyncio.Future):
         # Connecting or busy, we wait for the connection
         logger.debug('Waiting for DNS relay connection %a', dst)
-        reader, writer, waiters = yield from asyncio.wait_for(conn, None)
+        conn = yield from asyncio.wait_for(conn, None)
         while isinstance(conn_pool[dst], asyncio.Future):
             logger.debug('Connection %a is busy. Keep waiting.', dst)
-            reader, writer, waiters = \
-                    yield from asyncio.wait_for(conn_pool[dst], None)
+            conn = yield from asyncio.wait_for(conn_pool[dst], None)
         logger.debug('Acquired DNS relay connection %a', dst)
         conn_pool[dst] = asyncio.Future()
 
     else:
-        reader, writer, waiters = conn
         conn_pool[dst] = asyncio.Future()
 
-    return (reader, writer, waiters)
+    return conn
 
 
-def put_dns_conn(dst, reader, writer, waiters):
+def put_dns_conn(dst, relay_conn):
     waiter = conn_pool[dst]
-    conn_pool[dst] = (reader, writer, waiters) # TODO: where's the dispatcher coroutine?
+    conn_pool[dst] = relay_conn
     waiter.set_result(conn_pool[dst])
 
 
@@ -223,7 +230,8 @@ def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     if len(msg) < 2:
         return
 
-    reader, writer, waiters = yield from get_dns_conn(dst, proxy)
+    relay_conn = yield from get_dns_conn(dst, proxy)
+    reader, writer, waiters, id_map = relay_conn
 
     dns_id, = struct.unpack_from('>H', msg)
     logger.debug('dns_id = %d', dns_id)
@@ -250,7 +258,7 @@ def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     logger.debug('UDP msg sent to %a', dst)
     logger.debug('Releasing DNS relay connection %a', dst)
 
-    put_dns_conn(dst, reader, writer, waiters)
+    put_dns_conn(dst, relay_conn)
 
     try:
         resp_msg = yield from asyncio.wait_for(dns_waiter, timeout)
