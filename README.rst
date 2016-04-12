@@ -7,17 +7,31 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
 
 .. _ShadowSocks: https://shadowsocks.org/
 
+安裝
+####
+
+.. code-block:: txt
+
+    ❯ pip install moses
+
+或者使用最新代码：
+
+.. code-block:: txt
+
+    ❯ git clone https://github.com/l04m33/moses.git
+    ❯ pip install ./moses
+
 使用方法
 ########
 
 .. code-block:: txt
 
-    ❯ ./moses.py -h
-    usage: moses.py [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-n] [-l LOCAL_CERT]
-                    [-r REMOTE_CERT] [-e CIPHERS] [--backlog BACKLOG]
-                    [--loglevel {critical,fatal,error,warning,info,debug}]
-                    [--block-size BLOCK_SIZE] [-p <ADDRESS>:<PORT>]
-                    [-f <ADDRESS>:<PORT>]
+    ❯ moses -h
+    usage: moses [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-n] [-l LOCAL_CERT]
+                 [-r REMOTE_CERT] [-e CIPHERS] [--backlog BACKLOG]
+                 [--loglevel {critical,fatal,error,warning,info,debug}]
+                 [--block-size BLOCK_SIZE] [-p <ADDRESS>:<PORT>]
+                 [-f <ADDRESS>:<PORT>]
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -26,7 +40,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
       -c, --client          Client mode
       -s, --server          Server mode
       -b <ADDRESS>:<PORT>, --bind <ADDRESS>:<PORT>
-                            IP & port to bind (default: <all interfaces>:1080)
+                            IP & port to bind (default: :1080)
       -n, --no-tls          Do not use TLS encryption
       -l LOCAL_CERT, --local-cert LOCAL_CERT
                             Local SSL certificates (default: ./local.pem)
@@ -55,17 +69,17 @@ Socks5 代理
 
 启动服务器：
 
-.. code-block:: sh
+.. code-block:: txt
 
-    ./moses.py -s -b some.server.addr.ess:32000 \
-               -l server_key.pem -r client_cert.pem
+    ❯ moses -s -b some.server.addr.ess:32000 \
+            -l server_key.pem -r client_cert.pem
 
 启动客户端：
 
-.. code-block:: sh
+.. code-block:: txt
 
-    ./moses.py -c -b 127.0.0.1:1080 -p some.server.addr.ess:32000 \
-               -l client_key.pem -r server_cert.pem
+    ❯ moses -c -b 127.0.0.1:1080 -p some.server.addr.ess:32000 \
+            -l client_key.pem -r server_cert.pem
 
 转发 HTTP 代理
 ##############
@@ -74,43 +88,43 @@ Moses 本身没有实现 HTTP 代理，不过你可以用 Moses 将 HTTP 代理�
 发到其他 HTTP 代理程序（例如 Privoxy_ ）上。假设你的服务器在 8118 端
 口上配置了一个 Privoxy 实例，这样启动 Moses 服务器即可：
 
-.. code-block:: sh
+.. code-block:: txt
 
-    ./moses.py -s -b some.server.addr.ess:32000 \
-               -f 127.0.0.1:8118 \
-               -l server_key.pem -r client_cert.pem
+    ❯ moses -s -b some.server.addr.ess:32000 \
+            -f 127.0.0.1:8118 \
+            -l server_key.pem -r client_cert.pem
 
 .. _Privoxy: http://www.privoxy.org/
 
 Linux 下的全局透明代理
 ######################
 
-``staff.py`` 是一个透明代理脚本，通过与 ``moses.py`` 配合可以自动转发
+``staff`` 是一个透明代理脚本，通过与 ``moses`` 配合可以自动转发
 所有 DNS 请求和 TCP 连接， poor man's VPN :)
 
 使用方法（假设 Moses 客户端运行在 127.0.0.1:1080 上）：
 
-.. code-block:: sh
+.. code-block:: txt
 
-    ./staff.py -p 127.0.0.1:1080
+    ❯ staff -p 127.0.0.1:1080
 
 然后用 iptables 添加这三条规则（当然 eth0 要替换成你自己的网络接口）：
 
-.. code-block:: sh
+.. code-block:: txt
 
-    iptables -t nat -I OUTPUT -o eth0 -p udp --dport 53  -j DNAT --to 127.0.0.1:32000
-    iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 80  -j DNAT --to 127.0.0.1:32000
-    iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 443 -j DNAT --to 127.0.0.1:32000
+    ❯ iptables -t nat -I OUTPUT -o eth0 -p udp --dport 53  -j DNAT --to 127.0.0.1:32000
+    ❯ iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 80  -j DNAT --to 127.0.0.1:32000
+    ❯ iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 443 -j DNAT --to 127.0.0.1:32000
 
 这样所有 DNS 请求和目标端口是 80、443 的 TCP 连接都会走 Moses 代理。
 
 你也可以更进一步，用 geoip 规则忽略某墙国的 IP （需要安装 `xtables-addons`_ ）：
 
-.. code-block:: sh
+.. code-block:: txt
 
-    iptables -t nat -I OUTPUT -o eth0 -p tcp -m geoip ! --dst-cc CN -j DNAT --to 127.0.0.1:32000
+    ❯ iptables -t nat -I OUTPUT -o eth0 -p tcp -m geoip ! --dst-cc CN -j DNAT --to 127.0.0.1:32000
 
-要查看其他选项的用法，执行 ``./staff.py -h`` .
+要查看其他选项的用法，执行 ``staff -h`` .
 
 .. _xtables-addons: http://xtables-addons.sourceforge.net/
 
