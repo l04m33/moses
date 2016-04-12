@@ -64,6 +64,10 @@ class VersionNotSupportedError(Exception):
     pass
 
 
+class AddressTypeNotSupportedError(Exception):
+    pass
+
+
 def check_version(ver):
     if ver != 0x05:
         logger('socks').debug('Protocol version %d not supported', ver)
@@ -97,6 +101,9 @@ def recv_request(reader):
     elif header[3] == 0x04:     # ipv6
         ip_binary = yield from reader.readexactly(16)
         address = ('{:02x}{:02x}:' * 7 + '{:02x}{:02x}').format(*ip_binary)
+    else:
+        raise AddressTypeNotSupportedError(
+                'Bad address type: {}'.format(header[3]))
 
     port_binary = yield from reader.readexactly(2)
     port = (port_binary[0] << 8) + port_binary[1]
