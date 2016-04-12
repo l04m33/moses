@@ -20,10 +20,10 @@ class UDPRelayProtocol(asyncio.Protocol):
         self._stream_down.write(data)
 
     def error_received(self, exc):
-        logger.debug('error_received: %a', exc)
+        logger('io').debug('error_received: %a', exc)
 
     def connection_lost(self, exc):
-        logger.debug('connection_lost: %a', exc)
+        logger('io').debug('connection_lost: %a', exc)
 
 
 @asyncio.coroutine
