@@ -1,10 +1,12 @@
 #!/bin/sh
 
-function gen_cert_name () {
+function gen_cert_name ()
+{
     echo cert_$(date +%Y-%b-%d_%H-%M-%S)
 }
 
-function gen_cert () {
+function gen_cert ()
+{
     local cert_name
 
     if [ ! -z "$1" ]; then
