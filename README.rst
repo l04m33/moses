@@ -10,13 +10,13 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
 安裝
 ####
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ pip install moses
 
 或者使用最新代码：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ git clone https://github.com/l04m33/moses.git
     ❯ pip install ./moses
@@ -24,7 +24,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
 使用方法
 ########
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ moses -h
     usage: moses [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-n] [-l LOCAL_CERT]
@@ -69,14 +69,14 @@ Socks5 代理
 
 启动服务器：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ moses -s -b some.server.addr.ess:32000 \
             -l server_key.pem -r client_cert.pem
 
 启动客户端：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ moses -c -b 127.0.0.1:1080 -p some.server.addr.ess:32000 \
             -l client_key.pem -r server_cert.pem
@@ -88,7 +88,7 @@ Moses 本身没有实现 HTTP 代理，不过你可以用 Moses 将 HTTP 代理�
 发到其他 HTTP 代理程序（例如 Privoxy_ ）上。假设你的服务器在 8118 端
 口上配置了一个 Privoxy 实例，这样启动 Moses 服务器即可：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ moses -s -b some.server.addr.ess:32000 \
             -f 127.0.0.1:8118 \
@@ -104,13 +104,13 @@ Linux 下的全局透明代理
 
 使用方法（假设 Moses 客户端运行在 127.0.0.1:1080 上）：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ staff -p 127.0.0.1:1080
 
 然后用 iptables 添加这三条规则（当然 eth0 要替换成你自己的网络接口）：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ iptables -t nat -I OUTPUT -o eth0 -p udp --dport 53  -j DNAT --to 127.0.0.1:32000
     ❯ iptables -t nat -I OUTPUT -o eth0 -p tcp --dport 80  -j DNAT --to 127.0.0.1:32000
@@ -120,7 +120,7 @@ Linux 下的全局透明代理
 
 你也可以更进一步，用 geoip 规则忽略某墙国的 IP （需要安装 `xtables-addons`_ ）：
 
-.. code-block:: txt
+.. code-block:: text
 
     ❯ iptables -t nat -I OUTPUT -o eth0 -p tcp -m geoip ! --dst-cc CN -j DNAT --to 127.0.0.1:32000
 
