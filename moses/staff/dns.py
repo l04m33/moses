@@ -17,6 +17,22 @@ DNSRelayConnection = \
                 ('reader', 'writer', 'waiters', 'id_map'))
 
 
+@asyncio.coroutine
+def new_dns_conn(dst, proxy):
+    conn_op = asyncio.async(socks.open_connection(proxy, 0x81, dst))
+    logger('staff.dns').debug('Creating DNS relay connection %a', dst)
+    reader, writer = yield from asyncio.wait_for(conn_op, None)
+    waiters = {}
+    id_map = {}
+    dispatch_op = \
+            asyncio.async(dns_resp_dispatcher(reader, waiters, id_map))
+    dispatch_op.add_done_callback(
+            functools.partial(
+                dns_resp_dispatcher_done, dst=dst, waiters=waiters))
+    logger('staff.dns').debug('Done creating DNS relay connection %a', dst)
+    return DNSRelayConnection(reader, writer, waiters, id_map)
+
+
 class DNSRelayProtocol(asyncio.DatagramProtocol):
     def __init__(self, proxy, dns_server, timeout, loop):
         self._proxy = proxy
@@ -116,25 +132,12 @@ def get_dns_conn(dst, proxy):
 
     if conn is None:
         # No existing connection found. Create a new one.
-        conn_op = asyncio.async(socks.open_connection(proxy, 0x81, dst))
         conn_pool[dst] = asyncio.Future()
-        logger('staff.dns').debug('Creating DNS relay connection %a', dst)
         try:
-            reader, writer = yield from asyncio.wait_for(conn_op, None)
+            conn = yield from new_dns_conn(dst, proxy)
         except Exception as exc:
-            # We still have the lock, clean it up ASAP
             clean_up_bad_conn(dst, exc)
             raise
-        waiters = {}
-        id_map = {}
-        dispatch_op = \
-                asyncio.async(dns_resp_dispatcher(reader, waiters, id_map))
-        dispatch_op.add_done_callback(
-                functools.partial(
-                    dns_resp_dispatcher_done, dst=dst, waiters=waiters))
-        conn = DNSRelayConnection(reader, writer, waiters, id_map)
-        logger('staff.dns').debug('Done creating DNS relay connection %a', dst)
-
     elif isinstance(conn, asyncio.Future):
         # Connecting or busy, we wait for the connection
         logger('staff.dns').debug('Waiting for DNS relay connection %a', dst)
@@ -144,7 +147,6 @@ def get_dns_conn(dst, proxy):
             conn = yield from asyncio.wait_for(conn_pool[dst], None)
         logger('staff.dns').debug('Acquired DNS relay connection %a', dst)
         conn_pool[dst] = asyncio.Future()
-
     else:
         conn_pool[dst] = asyncio.Future()
 
