@@ -1,5 +1,7 @@
 import unittest
 import asyncio
+import threading
+import concurrent.futures as futures
 import moses.socks as socks
 from . import dummy
 
@@ -101,3 +103,18 @@ class TestSocksProcedure(unittest.TestCase):
         ret = loop.run_until_complete(socks.handshake(reader, writer_mock))
         self.assertEqual(ret, (0x01, 0x01, '1.2.3.4', 9))
         self.assertEqual(dummy_write.buf, b'\x05\x00')
+
+    def test_open_connection(self):
+        s_addr = dummy.ensure_dummy_addr(None, None)
+        ev = threading.Event()
+        with futures.ThreadPoolExecutor(max_workers=1) as executor:
+            server_fut = executor.submit(
+                    dummy.run_dummy_socks_server, ev, *s_addr)
+            ev.wait()
+            loop = asyncio.get_event_loop()
+            reader, writer = \
+                    loop.run_until_complete(
+                            socks.open_connection(
+                                s_addr, 0x01, ('1.2.3.4', 53)))
+            ret = server_fut.result()
+            self.assertEqual(ret, (0x01, 0x01, '1.2.3.4', 53))
