@@ -92,18 +92,25 @@ def main():
 
     loop = asyncio.get_event_loop()
 
-    _transport, _protocol = \
+    transport, _protocol = \
             create_udp_server(
                     loop, '127.0.0.1', args.udp_port,
                     misc.parse_ip_port(args.proxy),
                     parse_dns_servers(args.dns),
                     args.dns_timeout)
 
-    _server = \
+    server = \
             create_tcp_server(
                     loop, '127.0.0.1', args.tcp_port,
                     misc.parse_ip_port(args.proxy),
                     args.backlog,
                     args.block_size)
 
-    loop.run_forever()
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+
+    server.close()
+    loop.run_until_complete(server.wait_closed())
+    transport.close()
