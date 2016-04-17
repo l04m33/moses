@@ -9,11 +9,18 @@ from ..log import logger
 
 
 class DNSRelayConnection:
-    def __init__(self, reader, writer, waiters, id_map):
+    def __init__(self, reader, writer, dst, waiters=None, id_map=None):
         self.reader = reader
         self.writer = writer
-        self.waiters = waiters
-        self.id_map = id_map
+        self.dst = dst
+        if waiters is None:
+            self.waiters = {}
+        else:
+            self.waiters = waiters
+        if id_map is None:
+            self.id_map = {}
+        else:
+            self.id_map = id_map
 
     @classmethod
     @asyncio.coroutine
@@ -21,14 +28,11 @@ class DNSRelayConnection:
         conn_op = asyncio.async(socks.open_connection(proxy, 0x81, dst))
         logger('staff.dns').debug('Creating DNS relay connection %a', dst)
         reader, writer = yield from asyncio.wait_for(conn_op, None)
-        waiters = {}
-        id_map = {}
-        new_conn = cls(reader, writer, waiters, id_map)
+        new_conn = cls(reader, writer, dst)
         dispatch_op = asyncio.async(new_conn.resp_dispatcher())
-        dispatch_op.add_done_callback(
-                functools.partial(new_conn.resp_dispatcher_done, dst=dst))
+        dispatch_op.add_done_callback(new_conn.resp_dispatcher_done)
         logger('staff.dns').debug('Done creating DNS relay connection %a', dst)
-        return cls(reader, writer, waiters, id_map)
+        return new_conn
 
     @classmethod
     @asyncio.coroutine
@@ -71,10 +75,10 @@ class DNSRelayConnection:
         cls.conn_pool[dst].exception()
         del cls.conn_pool[dst]
 
-    def put(self, dst):
-        waiter = self.__class__.conn_pool[dst]
-        self.__class__.conn_pool[dst] = self
-        waiter.set_result(self.__class__.conn_pool[dst])
+    def put(self):
+        waiter = self.conn_pool[self.dst]
+        self.conn_pool[self.dst] = self
+        waiter.set_result(self.conn_pool[self.dst])
 
     @asyncio.coroutine
     def send_msg(self, msg, src):
@@ -101,7 +105,7 @@ class DNSRelayConnection:
         try:
             yield from self.writer.drain()
         except Exception as exc:
-            self.clean_up_bad_conn(dst, exc)
+            self.clean_up_bad_conn(self.dst, exc)
             del self.waiters[waiter_key]
             del self.id_map[relay_dns_id]
             raise
@@ -151,13 +155,14 @@ class DNSRelayConnection:
                 logger('staff.dns').debug(
                         'Current id_map size: %d', len(self.id_map))
 
-    def resp_dispatcher_done(self, fut, dst):
+    def resp_dispatcher_done(self, fut):
         try:
             fut.result()
         except Exception as exc:
             logger('staff.dns').debug(traceback.format_exc())
             logger('staff.dns').debug(
-                    "DNS response dispatcher for %a terminated, cleaning up", dst)
+                    "DNS response dispatcher for %a terminated, cleaning up",
+                    self.dst)
             for _, w in self.waiters.items():
                 w.set_exception(exc)
 
@@ -203,7 +208,7 @@ def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
     relay_dns_id, dns_waiter = yield from relay_conn.send_msg(msg, src)
     logger('staff.dns').debug('UDP msg sent to %a', dst)
     logger('staff.dns').debug('Releasing DNS relay connection %a', dst)
-    relay_conn.put(dst)
+    relay_conn.put()
 
     resp_msg = yield from \
             relay_conn.wait_for_reply(relay_dns_id, dns_waiter, timeout)
