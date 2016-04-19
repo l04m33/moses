@@ -18,12 +18,14 @@ def create_tcp_server(loop, addr, port, proxy, backlog, bs):
     return loop.run_until_complete(srv_op)
 
 
-def create_udp_server(loop, addr, port, proxy, dns_servers, timeout):
+def create_udp_server(
+        loop, addr, port, proxy, dns_servers, timeout, dns_cache):
     logger('staff').info('UDP server listening on %s:%d', addr, port)
     # The reuse_address argument for create_datagram_endpoint does not exist
     # before Python 3.4.4, so we don't use it for better compatibility.
     ep_op = loop.create_datagram_endpoint(
-            lambda: dns.DNSRelayProtocol(proxy, dns_servers, timeout, loop),
+            lambda: dns.DNSRelayProtocol(
+                proxy, dns_servers, timeout, dns_cache),
             local_addr=(addr, port))
     return loop.run_until_complete(ep_op)
 
@@ -63,6 +65,12 @@ def parse_arguments():
                 defaults.STAFF_DNS_TIMEOUT),
             default=defaults.STAFF_DNS_TIMEOUT,
             type=float)
+    parser.add_argument('--dns-cache-size',
+            help='Max size for the local DNS cache. Set to zero to disable ' +
+                 'caching. EXPERIMENTAL (default: {})'.format(
+                     defaults.STAFF_DNS_CACHE_SIZE),
+            default=defaults.STAFF_DNS_CACHE_SIZE,
+            type=int)
     parser.add_argument('--backlog',
             help='Backlog for the listening socket (default: {})'.format(
                 defaults.BACKLOG),
@@ -92,12 +100,18 @@ def main():
 
     loop = asyncio.get_event_loop()
 
+    if args.dns_cache_size != 0:
+        dns_cache = dns.DNSCache(max_size=args.dns_cache_size)
+    else:
+        dns_cache = None
+
     transport, _protocol = \
             create_udp_server(
                     loop, '127.0.0.1', args.udp_port,
                     misc.parse_ip_port(args.proxy),
                     parse_dns_servers(args.dns),
-                    args.dns_timeout)
+                    args.dns_timeout,
+                    dns_cache)
 
     server = \
             create_tcp_server(

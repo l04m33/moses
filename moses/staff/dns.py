@@ -1,9 +1,11 @@
 import asyncio
 import collections
 import struct
+import ctypes
 import functools
 import random
 import traceback
+import time
 from .. import socks
 from ..log import logger
 
@@ -82,7 +84,7 @@ class DNSRelayConnection:
 
     @asyncio.coroutine
     def send_msg(self, msg, src):
-        dns_id, = struct.unpack_from('>H', msg)
+        dns_id, = struct.unpack('>H', msg[:2])
         logger('staff.dns').debug('dns_id = %d', dns_id)
 
         waiter_key = (src, dns_id)
@@ -142,7 +144,7 @@ class DNSRelayConnection:
             assert msg_len > 2
 
             msg = yield from self.reader.readexactly(msg_len)
-            relay_dns_id, = struct.unpack_from('>H', msg)
+            relay_dns_id, = struct.unpack('>H', msg[0:2])
             logger('staff.dns').debug('Got relayed DNS msg for ID %d', relay_dns_id)
 
             waiter_key = self.id_map.get(relay_dns_id)
@@ -174,11 +176,11 @@ class DNSRelayConnection:
 
 
 class DNSRelayProtocol(asyncio.DatagramProtocol):
-    def __init__(self, proxy, dns_server, timeout, loop):
+    def __init__(self, proxy, dns_server, timeout, cache=None):
         self._proxy = proxy
         self._dns = dns_server
         self._timeout = timeout
-        self._loop = loop
+        self._cache = cache
 
     def connection_made(self, transport):
         self._transport = transport
@@ -187,7 +189,7 @@ class DNSRelayProtocol(asyncio.DatagramProtocol):
         dns = random.choice(self._dns)
         fut = asyncio.async(
                 forward_dns_msg(
-                    data, addr, dns, self._proxy,
+                    data, addr, dns, self._cache, self._proxy,
                     self._transport, self._timeout))
         fut.add_done_callback(forward_dns_msg_done)
 
@@ -199,10 +201,245 @@ class DNSRelayProtocol(asyncio.DatagramProtocol):
             logger('staff.dns').debug(exc)
 
 
+class DNSMsgHeader(ctypes.BigEndianStructure):
+    _fields_ = [
+        ('id',          ctypes.c_uint16),
+        ('flags',       ctypes.c_uint16),
+        ('q_count',     ctypes.c_uint16),
+        ('a_count',     ctypes.c_uint16),
+        ('ns_count',    ctypes.c_uint16),
+        ('ar_count',    ctypes.c_uint16),
+    ]
+
+
+def dns_pack_name(name):
+    buf = bytearray()
+    sub_names = name.split(b'.')
+    for n in sub_names:
+        n_len = len(n).to_bytes(1, 'big')
+        buf.extend(n_len)
+        buf.extend(n)
+    return buf
+
+
+def dns_parse_name(msg, off):
+    name = bytearray()
+    ptr_ended = False
+    cur = off
+    while msg[cur] > 0:
+        if (msg[cur] & 0xc0) == 0xc0:
+            if not ptr_ended:
+                off = cur + 2
+                ptr_ended = True
+            ptr, = struct.unpack('>H', msg[cur:cur + 2])
+            cur = ptr & ~0xc000
+            continue
+        name.extend(msg[cur + 1:cur + 1 + msg[cur]])
+        name.extend(b'.')
+        cur = cur + 1 + msg[cur]
+
+    logger('staff.dns').debug('Parsed DNS name: %r', name)
+    if ptr_ended:
+        return (bytes(name), off)
+    return (bytes(name), cur + 1)
+
+
+def dns_parse_query(msg, off):
+    name, off = dns_parse_name(msg, off)
+    q_type, = struct.unpack('>H', msg[off:off + 2])
+    q_class, = struct.unpack('>H', msg[off + 2:off + 4])
+    return (name, q_type, q_class, off + 4)
+
+
+def dns_parse_queries(n, msg, off):
+    q_list = []
+    while n > 0:
+        name, q_type, q_class, off = dns_parse_query(msg, off)
+        n -= 1
+        if len(name) == 0:
+            continue
+        q_list.append((name, q_type, q_class))
+    return (q_list, off)
+
+
+def dns_parse_answer(msg, off):
+    name, off = dns_parse_name(msg, off)
+
+    a_type, = struct.unpack('>H', msg[off:off + 2])
+    off += 2
+
+    a_class, = struct.unpack('>H', msg[off:off + 2])
+    off += 2
+
+    ttl, = struct.unpack('>I', msg[off:off + 4])
+    off += 4
+
+    r_data_len, = struct.unpack('>H', msg[off:off + 2])
+    off += 2
+
+    r_data = msg[off:off + r_data_len]
+    if a_type == 0x05:
+        # It's a CNAME. Parse the full name.
+        cname, _name_off = dns_parse_name(msg, off)
+        r_data = dns_pack_name(cname)
+    off += r_data_len
+
+    return (name, a_type, a_class, ttl, r_data, off)
+
+
+def dns_parse_answers(n, msg, off):
+    a_list = []
+    while n > 0:
+        name, a_type, a_class, ttl, r_data, off = dns_parse_answer(msg, off)
+        n -= 1
+        if len(name) == 0:
+            continue
+        a_list.append((name, a_type, a_class, ttl, r_data))
+    return a_list
+
+
+class DNSCache:
+    def __init__(self, max_size=None):
+        self.max_size = max_size
+        self.cache = {}
+
+    def lookup(self, query):
+        ent = self.cache.get(query)
+        if ent is None:
+            return None
+        _last_seen, deadline, r_data = ent
+
+        now = time.time()
+        ttl = int(deadline - now)
+        if ttl <= 0:
+            logger('staff.dns').debug(
+                    'Cached DNS record %r timed out.', query)
+            del self.cache[query]
+            return None
+
+        return (ttl, r_data)
+
+    def resolve(self, msg):
+        body_off = ctypes.sizeof(DNSMsgHeader)
+        header = DNSMsgHeader.from_buffer_copy(msg[:body_off])
+
+        if header.flags & 0xf800:
+            # Not a standard query. We don't touch these.
+            return None
+        if header.q_count != 1:
+            # Multiple queries. we don't touch these either
+            return None
+
+        q_list, q_end_off = dns_parse_queries(header.q_count, msg, body_off)
+        name, q_type, q_class = q_list[0]
+
+        if q_type != 0x01 or q_class != 0x01 or len(name) == 0:
+            # Not an ADDRESS query for INET. Let it through.
+            return None
+
+        now = time.time()
+        ents = []
+        # Try CNAME records first
+        ent = self.lookup((name, 0x05, q_class))
+        while ent is not None:
+            ttl, r_data = ent
+            ents.append((name, 0x05, q_class, ttl, r_data))
+            cname, _off = dns_parse_name(r_data, 0)
+            ent = self.lookup((cname, 0x05, q_class))
+
+        if len(ents) > 0:
+            # Try to locate the real address by CNAME data
+            ent = self.lookup((cname, 0x01, q_class))
+            if ent is None:
+                # No A record found. Give up.
+                return None
+        else:
+            # No CNAME record found. Try A records.
+            ent = self.lookup((name, 0x01, q_class))
+            if ent is None:
+                return None
+
+        ttl, r_data = ent
+        ents.append((name, 0x01, q_class, ttl, r_data))
+
+        # Response, Recursion Available
+        header.flags |= 0x8080
+        # No Authoritative Answer, Not Truncated, Reserved Zeros, Zero Response Code
+        header.flags &= ~0x067f
+        header.a_count = len(ents)
+
+        buf = bytearray()
+        buf.extend(header)
+        buf.extend(msg[body_off:q_end_off])
+        for name, a_type, a_class, ttl, r_data in ents:
+            buf.extend(dns_pack_name(name))
+            buf.extend(struct.pack(
+                '>HHIH', a_type, a_class, ttl, len(r_data)))
+            buf.extend(r_data)
+
+        return buf
+
+    def fill(self, resp_msg):
+        body_off = ctypes.sizeof(DNSMsgHeader)
+        header = DNSMsgHeader.from_buffer_copy(resp_msg[:body_off])
+
+        if (not (header.flags & 0x8000)) or (header.flags & 0x7800):
+            # Not a standard response. We don't touch these.
+            return
+
+        q_list, q_end_off = dns_parse_queries(header.q_count, resp_msg, body_off)
+
+        a_list = dns_parse_answers(header.a_count, resp_msg, q_end_off)
+
+        now = time.time()
+        for name, a_type, a_class, ttl, r_data in a_list:
+            if (a_type != 0x01 and a_type != 0x05) \
+                    or a_class != 0x01 or ttl == 0:
+                continue
+            deadline = int(now + ttl)
+            self.cache[(name, a_type, a_class)] = (now, deadline, r_data)
+
+        self.purge()
+
+    def purge(self):
+        cache_count = len(self.cache)
+        logger('staff.dns').debug('Current DNS cache size: %d', cache_count)
+
+        if self.max_size < 0:
+            return
+
+        if cache_count <= self.max_size:
+            return
+
+        now = time.time()
+        for k, v in list(self.cache.items()):
+            _last_seen, deadline, _data = v
+            if int(deadline - now) <= 0:
+                del self.cache[k]
+
+        cache_count = len(self.cache)
+        logger('staff.dns').debug('New DNS cache size: %d', cache_count)
+        if cache_count <= self.max_size:
+            return
+
+        cache_items = list(self.cache.items())
+        cache_items.sort(key=lambda i: i[1][0])     # sorting by last_seen
+        for k, _v in cache_items[:cache_count - self.max_size]:
+            del self.cache[k]
+        logger('staff.dns').debug(
+                'New DNS cache size after purging: %d', len(self.cache))
+
+
 @asyncio.coroutine
-def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
+def forward_dns_msg(msg, src, dst, dns_cache, proxy, transport, timeout):
     if len(msg) < 2:
         return
+
+    if dns_cache is not None:
+        cached_resp = dns_cache.resolve(msg)
+        if cached_resp is not None:
+            transport.sendto(cached_resp, addr=src)
+            return
 
     relay_conn = yield from DNSRelayConnection.get(dst, proxy)
     relay_dns_id, dns_waiter = yield from relay_conn.send_msg(msg, src)
@@ -212,6 +449,10 @@ def forward_dns_msg(msg, src, dst, proxy, transport, timeout):
 
     resp_msg = yield from \
             relay_conn.wait_for_reply(relay_dns_id, dns_waiter, timeout)
+
+    if dns_cache is not None:
+        dns_cache.fill(resp_msg)
+
     transport.sendto(msg[:2] + resp_msg[2:], addr=src)
 
 
