@@ -396,6 +396,8 @@ class DNSCache:
             if (a_type != 0x01 and a_type != 0x05) \
                     or a_class != 0x01 or ttl == 0:
                 continue
+            if self.lookup((name, a_type, a_class)) is not None:
+                continue
             deadline = int(now + ttl)
             self.cache[(name, a_type, a_class)] = (now, deadline, r_data)
 
