@@ -304,20 +304,83 @@ class DNSCache:
         self.cache = {}
 
     def lookup(self, query):
-        ent = self.cache.get(query)
-        if ent is None:
-            return None
-        _last_seen, deadline, r_data = ent
+        ents = self.cache.get(query)
+        if ents is None:
+            return []
+
+        last_seen, ents = ents
 
         now = time.time()
-        ttl = int(deadline - now)
-        if ttl <= 0:
-            logger('staff.dns').debug(
-                    'Cached DNS record %r timed out.', query)
-            del self.cache[query]
-            return None
+        alive_ents = []
+        for ent in ents:
+            deadline, r_data = ent
+            ttl = int(deadline - now)
+            if ttl <= 0:
+                logger('staff.dns').debug(
+                        'Cached DNS record %r timed out.', query)
+                continue
+            alive_ents.append((deadline, r_data))
 
-        return (ttl, r_data)
+        if len(alive_ents) > 0:
+            self.cache[query] = (last_seen, alive_ents)
+            return alive_ents
+        else:
+            del self.cache[query]
+            return []
+
+    def _find_cached_records(self, name, q_class):
+        ents = []
+        # Try CNAME records first
+        to_resolve = [ \
+                (name, 0x05, q_class, deadline, r_data) \
+                for deadline, r_data \
+                in self.lookup((name, 0x05, q_class))]
+
+        addr_found = False
+
+        while len(to_resolve) > 0:
+            logger('staff.dns').debug('to_resolve = %r', to_resolve)
+
+            e = _name, q_type, _q_class, _deadline, r_data = to_resolve.pop(0)
+            ents.append(e)
+
+            if q_type == 0x01:
+                continue
+
+            cname, _off = dns_parse_name(r_data, 0)
+            r = self.lookup((cname, 0x05, q_class))
+            if len(r) > 0:
+                to_resolve.extend([
+                    (cname, 0x05, q_class, c_deadline, c_r_data)
+                    for c_deadline, c_r_data in r])
+            else:
+                # Try A records
+                r = self.lookup((cname, 0x01, q_class))
+                if len(r) > 0:
+                    addr_found = True
+                to_resolve.extend([
+                    (cname, 0x01, q_class, a_deadline, a_r_data)
+                    for a_deadline, a_r_data in r])
+
+        if len(ents) == 0:
+            # No CNAME record found. Try A records
+            r = self.lookup((name, 0x01, q_class))
+            if len(r) > 0:
+                addr_found = True
+            ents.extend([
+                (name, 0x01, q_class, a_deadline, a_r_data)
+                for a_deadline, a_r_data in r])
+
+        if not addr_found:
+            # Can't resolve to the real address. Remove the whole chain
+            for name, q_type, q_class, _deadline, _r_data in ents:
+                try:
+                    del self.cache[(name, q_type, q_class)]
+                except KeyError:
+                    pass
+
+        logger('staff.dns').debug('ents = %r', ents)
+        return ents
 
     def resolve(self, msg):
         body_off = ctypes.sizeof(DNSMsgHeader)
@@ -337,30 +400,9 @@ class DNSCache:
             # Not an ADDRESS query for INET. Let it through.
             return None
 
-        now = time.time()
-        ents = []
-        # Try CNAME records first
-        ent = self.lookup((name, 0x05, q_class))
-        while ent is not None:
-            ttl, r_data = ent
-            ents.append((name, 0x05, q_class, ttl, r_data))
-            cname, _off = dns_parse_name(r_data, 0)
-            ent = self.lookup((cname, 0x05, q_class))
-
-        if len(ents) > 0:
-            # Try to locate the real address by CNAME data
-            ent = self.lookup((cname, 0x01, q_class))
-            if ent is None:
-                # No A record found. Give up.
-                return None
-        else:
-            # No CNAME record found. Try A records.
-            ent = self.lookup((name, 0x01, q_class))
-            if ent is None:
-                return None
-
-        ttl, r_data = ent
-        ents.append((name, 0x01, q_class, ttl, r_data))
+        ents = self._find_cached_records(name, q_class)
+        if len(ents) == 0:
+            return None
 
         # Response, Recursion Available
         header.flags |= 0x8080
@@ -368,13 +410,14 @@ class DNSCache:
         header.flags &= ~0x067f
         header.a_count = len(ents)
 
+        now = time.time()
         buf = bytearray()
         buf.extend(header)
         buf.extend(msg[body_off:q_end_off])
-        for name, a_type, a_class, ttl, r_data in ents:
+        for name, a_type, a_class, deadline, r_data in ents:
             buf.extend(dns_pack_name(name))
             buf.extend(struct.pack(
-                '>HHIH', a_type, a_class, ttl, len(r_data)))
+                '>HHIH', a_type, a_class, int(deadline - now), len(r_data)))
             buf.extend(r_data)
 
         return buf
@@ -396,10 +439,14 @@ class DNSCache:
             if (a_type != 0x01 and a_type != 0x05) \
                     or a_class != 0x01 or ttl == 0:
                 continue
-            if self.lookup((name, a_type, a_class)) is not None:
-                continue
+            cached = self.cache.get((name, a_type, a_class))
             deadline = int(now + ttl)
-            self.cache[(name, a_type, a_class)] = (now, deadline, r_data)
+            if cached is not None:
+                if cached[0] != now:
+                    del self.cache[(name, a_type, a_class)]
+                cached[1].append((deadline, r_data))
+            else:
+                self.cache[(name, a_type, a_class)] = (now, [(deadline, r_data)])
 
         self.purge()
 
@@ -415,9 +462,13 @@ class DNSCache:
 
         now = time.time()
         for k, v in list(self.cache.items()):
-            _last_seen, deadline, _data = v
-            if int(deadline - now) <= 0:
-                del self.cache[k]
+            last_seen, ents = v
+            for deadline, _r_data in ents:
+                if int(deadline - now) <= 0:
+                    logger('staff.dns').debug(
+                            'Purging outdated record %r', k)
+                    del self.cache[k]
+                    break
 
         cache_count = len(self.cache)
         logger('staff.dns').debug('New DNS cache size: %d', cache_count)
