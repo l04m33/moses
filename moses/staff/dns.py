@@ -378,6 +378,7 @@ class DNSCache:
                     del self.cache[(name, q_type, q_class)]
                 except KeyError:
                     pass
+            ents = []
 
         logger('staff.dns').debug('ents = %r', ents)
         return ents
