@@ -1,3 +1,4 @@
+import sys
 import asyncio
 import socket
 import struct
@@ -85,7 +86,7 @@ def do_streaming(reader, writer, remote_reader, remote_writer, bs):
         f.cancel()
 
 
-def enable_keepalive(writer, ka_params):
+def enable_keepalive_linux(writer, ka_params):
     sock = writer.get_extra_info('socket')
     keepalive_time, keepalive_probes, keepalive_intvl = ka_params
     try:
@@ -100,3 +101,22 @@ def enable_keepalive(writer, ka_params):
         # The connection is still working, so keep it open.
         logger('io').warning('Failed to enable TCP keepalive.')
         logger('io').debug(traceback.format_exc())
+
+
+# TODO: NOT TESTED
+def enable_keepalive_windows(writer, ka_params):
+    sock = writer.get_extra_info('socket')
+    keepalive_time, _keepalive_probes, keepalive_intvl = ka_params
+    try:
+        sock.ioctl(socket.SIO_KEEPALIVE_VALS,
+                (1, keepalive_time * 1000, keepalive_intvl * 1000))
+    except:
+        # The connection is still working, so keep it open.
+        logger('io').warning('Failed to enable TCP keepalive.')
+        logger('io').debug(traceback.format_exc())
+
+
+if sys.platform.startswith('linux'):
+    enable_keepalive = enable_keepalive_linux
+elif sys.platform.startswith('win'):
+    enable_keepalive = enable_keepalive_windows
