@@ -147,7 +147,10 @@ def handshake_done(socks_req, reader, writer):
 
 @asyncio.coroutine
 def open_connection(proxy, cmd, dst):
-    reader, writer = yield from asyncio.open_connection(proxy[0], proxy[1])
+    conn = yield from io.do_connect(proxy[0], proxy[1])
+    if conn is None:
+        raise RuntimeError('Failed to open socks connection to {}', proxy)
+    reader, writer = conn
 
     try:
         writer.write(b'\x05\x01\x00')

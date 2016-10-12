@@ -1,4 +1,5 @@
 import asyncio
+import socket
 import struct
 import traceback
 from concurrent.futures import FIRST_COMPLETED
@@ -46,7 +47,7 @@ def streaming(reader, writer, block_size):
 
 
 @asyncio.coroutine
-def do_connect(addr, port, ssl=None):
+def do_connect(addr, port, ssl=None, keepalive=None):
     connect_op = asyncio.async(asyncio.open_connection(addr, port, ssl=ssl))
     try:
         proxy_reader, proxy_writer = \
@@ -55,6 +56,21 @@ def do_connect(addr, port, ssl=None):
         connect_op.cancel()     # for python version < 3.4.3
         logger('io').debug(traceback.format_exc())
         return None
+
+    if keepalive is not None:
+        sock = proxy_writer.get_extra_info('socket')
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            # tcp_keepalive_time
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPIDLE, keepalive[0])
+            # tcp_keepalive_probes
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPCNT, keepalive[1])
+            # tcp_keepalive_intvl
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPINTVL, keepalive[2])
+        except:
+            # The connection is still working, so keep it open.
+            logger('io').warning('Failed to enable TCP keepalive.')
+            logger('io').debug(traceback.format_exc())
 
     if ssl is not None:
         cur_cipher = proxy_writer.get_extra_info('cipher')

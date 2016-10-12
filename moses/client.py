@@ -12,9 +12,10 @@ def client_connection_cb(reader, writer, params):
     server_addr = params['server_addr']
     bs = params.get('bs', defaults.BLOCK_SIZE)
     ssl_ctx = params.get('ssl_ctx', None)
+    keepalive = params.get('keepalive', None)
 
     remote_rw = yield from io.do_connect(
-            server_addr[0], server_addr[1], ssl=ssl_ctx)
+            server_addr[0], server_addr[1], ssl=ssl_ctx, keepalive=keepalive)
     if remote_rw is None:
         writer.close()
         return
@@ -46,10 +47,20 @@ def client_main(loop, args):
         ssl_ctx = misc.build_ssl_ctx(
                 args.local_cert, args.remote_cert, args.ciphers)
 
+    if args.keepalive is None:
+        keepalive = None
+    else:
+        try:
+            keepalive = misc.parse_keepalive_params(args.keepalive)
+        except:
+            logger('client').error('Bad keepalive parameters: %s', args.keepalive)
+            sys.exit(1)
+
     params = {
         'server_addr': server_addr,
         'bs': args.block_size,
         'ssl_ctx': ssl_ctx,
+        'keepalive': keepalive,
     }
     cb = functools.partial(client_connection_cb, params=params)
 

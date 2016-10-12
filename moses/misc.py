@@ -6,6 +6,12 @@ def parse_ip_port(addr_str):
     return (addr_str[0:last_col], int(addr_str[last_col+1:]))
 
 
+def parse_keepalive_params(ka_str):
+    params = tuple((int(n) for n in ka_str.split(',')))
+    assert len(params) == 3
+    return params
+
+
 def build_ssl_ctx(my_certs_file, peer_certs_file, ciphers=None):
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
     if ciphers is not None:
