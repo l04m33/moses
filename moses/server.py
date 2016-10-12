@@ -25,6 +25,15 @@ def server_connection_cb(reader, writer, params):
 def server_main(loop, args):
     logger('server').info('Moses server listening at %s', args.bind)
 
+    if args.keepalive is None:
+        keepalive = None
+    else:
+        try:
+            keepalive = misc.parse_keepalive_params(args.keepalive)
+        except:
+            logger('client').error('Bad keepalive parameters: %s', args.keepalive)
+            sys.exit(1)
+
     if args.forward is not None:
         logger('server').info('Forwarding client connections to %s', args.forward)
         try:
@@ -35,10 +44,14 @@ def server_main(loop, args):
         params = {
             'server_addr': forward_addr,
             'bs': args.block_size,
+            'keepalive': keepalive,
         }
         cb = functools.partial(client.client_connection_cb, params=params)
     else:
-        params = { 'bs': args.block_size }
+        params = {
+            'bs': args.block_size,
+            'keepalive': keepalive,
+        }
         cb = functools.partial(server_connection_cb, params=params)
 
     if args.no_tls:

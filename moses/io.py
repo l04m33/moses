@@ -58,19 +58,7 @@ def do_connect(addr, port, ssl=None, keepalive=None):
         return None
 
     if keepalive is not None:
-        sock = proxy_writer.get_extra_info('socket')
-        try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            # tcp_keepalive_time
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPIDLE, keepalive[0])
-            # tcp_keepalive_probes
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPCNT, keepalive[1])
-            # tcp_keepalive_intvl
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPINTVL, keepalive[2])
-        except:
-            # The connection is still working, so keep it open.
-            logger('io').warning('Failed to enable TCP keepalive.')
-            logger('io').debug(traceback.format_exc())
+        enable_keepalive(proxy_writer, keepalive)
 
     if ssl is not None:
         cur_cipher = proxy_writer.get_extra_info('cipher')
@@ -95,3 +83,20 @@ def do_streaming(reader, writer, remote_reader, remote_writer, bs):
 
     for f in pending:
         f.cancel()
+
+
+def enable_keepalive(writer, ka_params):
+    sock = writer.get_extra_info('socket')
+    keepalive_time, keepalive_probes, keepalive_intvl = ka_params
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+        # tcp_keepalive_time
+        sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPIDLE, keepalive_time)
+        # tcp_keepalive_probes
+        sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPCNT, keepalive_probes)
+        # tcp_keepalive_intvl
+        sock.setsockopt(socket.SOL_TCP, socket.TCP_KEEPINTVL, keepalive_intvl)
+    except:
+        # The connection is still working, so keep it open.
+        logger('io').warning('Failed to enable TCP keepalive.')
+        logger('io').debug(traceback.format_exc())

@@ -14,7 +14,8 @@ def cmd_connect(socks_req, reader, writer, params):
 
     logger('socks').debug('Connecting to %s:%d', address, port)
 
-    remote_rw = yield from io.do_connect(address, port)
+    keepalive = params.get('keepalive', None)
+    remote_rw = yield from io.do_connect(address, port, keepalive=keepalive)
     if remote_rw is None:
         writer.close()
         return
