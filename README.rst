@@ -30,8 +30,9 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
     usage: moses [-h] (-c | -s) [-b <ADDRESS>:<PORT>] [-n] [-l LOCAL_CERT]
                  [-r REMOTE_CERT] [-e CIPHERS] [--backlog BACKLOG]
                  [--loglevel {critical,fatal,error,warning,info,debug}]
-                 [--block-size BLOCK_SIZE] [-k KEEPALIVE] [-p <ADDRESS>:<PORT>]
-                 [-f <ADDRESS>:<PORT>]
+                 [--block-size BLOCK_SIZE]
+                 [-k <KEEPALIVE_TIME>,<KEEPALIVE_PROBES>,<KEEPALIVE_INTVL>]
+                 [-p <ADDRESS>:<PORT>] [-f <ADDRESS>:<PORT>]
 
     optional arguments:
       -h, --help            show this help message and exit
@@ -55,11 +56,9 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
       --block-size BLOCK_SIZE
                             Block size for data streaming, in bytes (default:
                             2048)
-      -k KEEPALIVE, --keepalive KEEPALIVE
-                            TCP keepalive parameters, in the form of
-                            <keepalive_time>,<keepalive_probes>,<keepalive_intvl>.
-                            See `man 7 tcp` for details (default: keepalive
-                            disabled)
+      -k <KEEPALIVE_TIME>,<KEEPALIVE_PROBES>,<KEEPALIVE_INTVL>, --keepalive <KEEPALIVE_TIME>,<KEEPALIVE_PROBES>,<KEEPALIVE_INTVL>
+                            TCP keepalive parameters, See `man 7 tcp` for details
+                            (default: keepalive disabled)
 
     Client Options:
       -p <ADDRESS>:<PORT>, --peer <ADDRESS>:<PORT>
