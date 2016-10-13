@@ -57,7 +57,7 @@ Moses 是一个使用加密连接的 Socks5 代理，原理与 `ShadowSocks`_ �
                             Block size for data streaming, in bytes (default:
                             2048)
       -k <KEEPALIVE_TIME>,<KEEPALIVE_PROBES>,<KEEPALIVE_INTVL>, --keepalive <KEEPALIVE_TIME>,<KEEPALIVE_PROBES>,<KEEPALIVE_INTVL>
-                            TCP keepalive parameters, See `man 7 tcp` for details
+                            TCP keepalive parameters. See `man 7 tcp` for details
                             (default: keepalive disabled)
 
     Client Options:
