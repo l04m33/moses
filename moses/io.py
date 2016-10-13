@@ -103,7 +103,6 @@ def enable_keepalive_linux(writer, ka_params):
         logger('io').debug(traceback.format_exc())
 
 
-# TODO: NOT TESTED
 def enable_keepalive_windows(writer, ka_params):
     sock = writer.get_extra_info('socket')
     keepalive_time, _keepalive_probes, keepalive_intvl = ka_params
