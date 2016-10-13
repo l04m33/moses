@@ -62,8 +62,8 @@ def parse_arguments():
             default=defaults.BLOCK_SIZE,
             type=int)
     common_group.add_argument('-k', '--keepalive',
+            metavar='<KEEPALIVE_TIME>,<KEEPALIVE_PROBES>,<KEEPALIVE_INTVL>',
             help='TCP keepalive parameters, '
-                 'in the form of <keepalive_time>,<keepalive_probes>,<keepalive_intvl>. '
                  'See `man 7 tcp` for details (default: keepalive disabled)',
             type=str)
 
