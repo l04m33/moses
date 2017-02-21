@@ -33,6 +33,11 @@ def create_udp_server(
 def parse_arguments():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('-b', '--bind',
+            help='IP to bind (default: {})'.format(
+                defaults.STAFF_BINDING_ADDRESS),
+            default=defaults.STAFF_BINDING_ADDRESS,
+            type=str)
     parser.add_argument('-t', '--tcp-port',
             help='The TCP port to listen on (default: {})'.format(
                 defaults.STAFF_TCP_PORT),
@@ -107,7 +112,7 @@ def main():
 
     transport, _protocol = \
             create_udp_server(
-                    loop, '127.0.0.1', args.udp_port,
+                    loop, args.bind, args.udp_port,
                     misc.parse_ip_port(args.proxy),
                     parse_dns_servers(args.dns),
                     args.dns_timeout,
@@ -115,7 +120,7 @@ def main():
 
     server = \
             create_tcp_server(
-                    loop, '127.0.0.1', args.tcp_port,
+                    loop, args.bind, args.tcp_port,
                     misc.parse_ip_port(args.proxy),
                     args.backlog,
                     args.block_size)
