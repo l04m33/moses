@@ -3,10 +3,24 @@ import re
 import moses.defaults as defaults
 
 
-IP_PORT_RE = '^(((([0-9]{1,3}\.){3}[0-9]{1,3})(:([0-9]{1,5}))?)|(([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})|(\[(([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})\]:([0-9]{1,5}))|(([^:]+)(:([0-9]{1,5}))?)|(:([0-9]{1,5})))$'
+IP_PORT_RE = '''
+    ^
+    (
+        ((([0-9]{1,3}\.){3}[0-9]{1,3})(:([0-9]{1,5}))?)               # ipv4[:port]
+        |
+        (([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})                    # ipv6 without port no.
+        |
+        (\[(([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})\]:([0-9]{1,5})) # ipv6 with port no.
+        |
+        (([^:]+)(:([0-9]{1,5}))?)                                     # domain[:port]
+        |
+        (:([0-9]{1,5}))                                               # :port
+    )
+    $
+    '''
 
 def parse_ip_port(addr_str):
-    m = re.match(IP_PORT_RE, addr_str)
+    m = re.match(IP_PORT_RE, addr_str, re.VERBOSE)
     if m is None:
         raise RuntimeError('Bad address: {}'.format(addr_str))
 
