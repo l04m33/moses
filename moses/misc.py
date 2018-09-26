@@ -1,9 +1,43 @@
 import ssl
+import re
+import moses.defaults as defaults
 
+
+IP_PORT_RE = '^(((([0-9]{1,3}\.){3}[0-9]{1,3})(:([0-9]{1,5}))?)|(([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})|(\[(([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})\]:([0-9]{1,5}))|(([^:]+)(:([0-9]{1,5}))?)|(:([0-9]{1,5})))$'
 
 def parse_ip_port(addr_str):
-    last_col = addr_str.rfind(':')
-    return (addr_str[0:last_col], int(addr_str[last_col+1:]))
+    m = re.match(IP_PORT_RE, addr_str)
+    if m is None:
+        raise RuntimeError('Bad address: {}'.format(addr_str))
+
+    if m.group(2) is not None:
+        # ipv4[:port]
+        addr = m.group(3)
+        if m.group(6) is not None:
+            port = int(m.group(6))
+        else:
+            port = defaults.BINDING_PORT
+    elif m.group(7) is not None:
+        # ipv6 without port no.
+        addr = m.group(7)
+        port = defaults.BINDING_PORT
+    elif m.group(9) is not None:
+        # ipv6 with port no.
+        addr = m.group(10)
+        port = int(m.group(12))
+    elif m.group(13) is not None:
+        # domain[:port]
+        addr = m.group(14)
+        if m.group(16) is not None:
+            port = int(m.group(16))
+        else:
+            port = defaults.BINDING_PORT
+    elif m.group(17) is not None:
+        # :port
+        addr = ''
+        port = int(m.group(18))
+
+    return (addr, port)
 
 
 def parse_keepalive_params(ka_str):

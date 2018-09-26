@@ -1,4 +1,5 @@
 BINDING_ADDRESS = ':1080'       # <ADDRESS>:<PORT>
+BINDING_PORT = 1080
 LOCAL_CERT_FILE = './local.pem'
 REMOTE_CERT_FILE = './remote.pem'
 BACKLOG = 128
