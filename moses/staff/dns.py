@@ -7,6 +7,7 @@ import random
 import traceback
 import time
 from .. import socks
+from ..misc import ensure_future
 from ..log import logger
 
 
@@ -27,11 +28,11 @@ class DNSRelayConnection:
     @classmethod
     @asyncio.coroutine
     def new(cls, dst, proxy):
-        conn_op = asyncio.ensure_future(socks.open_connection(proxy, 0x81, dst))
+        conn_op = ensure_future(socks.open_connection(proxy, 0x81, dst))
         logger('staff.dns').debug('Creating DNS relay connection %a', dst)
         reader, writer = yield from asyncio.wait_for(conn_op, None)
         new_conn = cls(reader, writer, dst)
-        dispatch_op = asyncio.ensure_future(new_conn.resp_dispatcher())
+        dispatch_op = ensure_future(new_conn.resp_dispatcher())
         dispatch_op.add_done_callback(new_conn.resp_dispatcher_done)
         logger('staff.dns').debug('Done creating DNS relay connection %a', dst)
         return new_conn
@@ -187,7 +188,7 @@ class DNSRelayProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data, addr):
         dns = random.choice(self._dns)
-        fut = asyncio.ensure_future(
+        fut = ensure_future(
                 forward_dns_msg(
                     data, addr, dns, self._cache, self._proxy,
                     self._transport, self._timeout))

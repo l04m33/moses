@@ -4,6 +4,7 @@ import socket
 import struct
 import traceback
 from concurrent.futures import FIRST_COMPLETED
+from .misc import ensure_future
 from .log import logger
 
 
@@ -49,7 +50,7 @@ def streaming(reader, writer, block_size):
 
 @asyncio.coroutine
 def do_connect(addr, port, ssl=None, keepalive=None):
-    connect_op = asyncio.ensure_future(asyncio.open_connection(addr, port, ssl=ssl))
+    connect_op = ensure_future(asyncio.open_connection(addr, port, ssl=ssl))
     try:
         proxy_reader, proxy_writer = \
                 yield from asyncio.wait_for(connect_op, None)
@@ -70,8 +71,8 @@ def do_connect(addr, port, ssl=None, keepalive=None):
 
 @asyncio.coroutine
 def do_streaming(reader, writer, remote_reader, remote_writer, bs):
-    stream_up = asyncio.ensure_future(streaming(reader, remote_writer, bs))
-    stream_down = asyncio.ensure_future(streaming(remote_reader, writer, bs))
+    stream_up = ensure_future(streaming(reader, remote_writer, bs))
+    stream_down = ensure_future(streaming(remote_reader, writer, bs))
 
     done, pending = yield from \
             asyncio.wait([stream_up, stream_down], return_when=FIRST_COMPLETED)

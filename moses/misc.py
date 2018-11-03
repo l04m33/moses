@@ -1,3 +1,5 @@
+import sys
+import asyncio
 import ssl
 import re
 import moses.defaults as defaults
@@ -71,3 +73,14 @@ def build_ssl_ctx(my_certs_file, peer_certs_file, ciphers=None):
     ssl_ctx.load_cert_chain(my_certs_file)
     ssl_ctx.load_verify_locations(peer_certs_file)
     return ssl_ctx
+
+
+if sys.version_info < (3, 5):
+    # The word 'async' became a keyword in later Python versions,
+    # and would cause syntax errors if not quoted.
+    _async_func = getattr(asyncio, 'async')
+    def ensure_future(*args, **kwargs):
+        return _async_func(*args, **kwargs)
+else:
+    def ensure_future(*args, **kwargs):
+        return asyncio.ensure_future(*args, **kwargs)
