@@ -78,9 +78,6 @@ def build_ssl_ctx(my_certs_file, peer_certs_file, ciphers=None):
 if sys.version_info < (3, 5):
     # The word 'async' became a keyword in later Python versions,
     # and would cause syntax errors if not quoted.
-    _async_func = getattr(asyncio, 'async')
-    def ensure_future(*args, **kwargs):
-        return _async_func(*args, **kwargs)
+    ensure_future = getattr(asyncio, 'async')
 else:
-    def ensure_future(*args, **kwargs):
-        return asyncio.ensure_future(*args, **kwargs)
+    ensure_future = asyncio.ensure_future
