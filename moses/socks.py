@@ -17,15 +17,19 @@ def cmd_connect(socks_req, reader, writer, params):
     keepalive = params.get('keepalive', None)
     remote_rw = yield from io.do_connect(address, port, keepalive=keepalive)
     if remote_rw is None:
-        writer.close()
+        return
+
+    try:
+        yield from handshake_done(socks_req, reader, writer)
+    except:
+        logger('socks').debug('Socks handshake failed.')
+        logger('socks').debug(traceback.format_exc())
+        remote_rw[1].close()
         return
 
     bs = params.get('bs', defaults.BLOCK_SIZE)
-    try:
-        yield from handshake_done(socks_req, reader, writer)
-        yield from io.do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
-    finally:
-        remote_rw[1].close()
+    yield from io.do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
+    remote_rw[1].close()
 
 
 @asyncio.coroutine
