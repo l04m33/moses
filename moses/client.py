@@ -1,6 +1,7 @@
 import sys
 import asyncio
 import functools
+from concurrent.futures import ALL_COMPLETED
 from . import defaults
 from . import io
 from . import misc
@@ -17,13 +18,14 @@ def client_connection_cb(reader, writer, params):
     remote_rw = yield from io.do_connect(
             server_addr[0], server_addr[1], ssl=ssl_ctx, keepalive=keepalive)
     if remote_rw is None:
-        writer.close()
+        yield from io.sync_close(writer)
         return
 
     yield from io.do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
 
-    remote_rw[1].close()
-    writer.close()
+    yield from asyncio.wait([misc.ensure_future(io.sync_close(remote_rw[1])),
+                             misc.ensure_future(io.sync_close(writer))],
+                            return_when=ALL_COMPLETED)
 
 
 def client_main(loop, args):

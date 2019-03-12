@@ -36,6 +36,17 @@ def sync_write(writer, data):
 
 
 @asyncio.coroutine
+def sync_close(writer):
+    writer.close()
+    try:
+        yield from writer.wait_closed()
+        return True
+    except:
+        logger('io').debug(traceback.format_exc())
+        return False
+
+
+@asyncio.coroutine
 def streaming(reader, writer, block_size):
     data = yield from reader.read(block_size)
     while len(data) > 0:

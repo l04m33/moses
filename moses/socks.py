@@ -24,12 +24,12 @@ def cmd_connect(socks_req, reader, writer, params):
     except:
         logger('socks').debug('Socks handshake failed.')
         logger('socks').debug(traceback.format_exc())
-        remote_rw[1].close()
+        yield from io.sync_close(remote_rw[1])
         return
 
     bs = params.get('bs', defaults.BLOCK_SIZE)
     yield from io.do_streaming(reader, writer, remote_rw[0], remote_rw[1], bs)
-    remote_rw[1].close()
+    yield from io.sync_close(remote_rw[1])
 
 
 @asyncio.coroutine
@@ -176,7 +176,7 @@ def open_connection(proxy, cmd, dst):
         res = yield from reader.readexactly(10)
         assert res == b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00'
     except:
-        writer.close()
+        yield from io.sync_close(writer)
         raise
 
     return (reader, writer)

@@ -1,6 +1,7 @@
 import sys
 import functools
 import asyncio
+from . import io
 from . import misc
 from . import client
 from . import socks
@@ -11,7 +12,7 @@ from .log import logger
 def server_connection_cb(reader, writer, params):
     socks_req = yield from socks.handshake(reader, writer)
     if socks_req is None:
-        writer.close()
+        yield from io.sync_close(writer)
         return
 
     cmd_handler = socks.supported_cmds[socks_req[0]]
@@ -19,7 +20,7 @@ def server_connection_cb(reader, writer, params):
     try:
         yield from cmd_handler(socks_req, reader, writer, params)
     finally:
-        writer.close()
+        yield from io.sync_close(writer)
 
 
 def server_main(loop, args):
